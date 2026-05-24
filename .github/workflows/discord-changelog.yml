@@ -31,70 +31,70 @@ jobs:
   discord-changelog:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    env:
-      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
-      GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - name: Post changelog to Discord
-        shell: bash
-        run: |
-          set -euo pipefail
+        uses: actions/github-script@v7
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        with:
+          script: |
+            const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
 
-          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
-            echo "Missing DISCORD_CHANGELOG_WEBHOOK secret."
-            exit 1
-          fi
+            if (!webhookUrl) {
+              core.setFailed("Missing DISCORD_CHANGELOG_WEBHOOK secret.");
+              return;
+            }
 
-          EVENT_NAME="${GITHUB_EVENT_NAME}"
-          EVENT_FILE="${GITHUB_EVENT_PATH}"
-          REPO_FULL="$(jq -r '.repository.full_name // env.GITHUB_REPOSITORY' "$EVENT_FILE")"
-          REPO_URL="$(jq -r '.repository.html_url // ("https://github.com/" + env.GITHUB_REPOSITORY)' "$EVENT_FILE")"
-          ACTOR="$(jq -r '.sender.login // .pusher.name // env.GITHUB_ACTOR // "GitHub"' "$EVENT_FILE")"
-          FIELDS="[]"
-          COLOR="10070709"
-          URL="$REPO_URL"
+            let eventName = context.eventName;
+            let event = context.payload;
+            const repoFullName = `${context.repo.owner}/${context.repo.repo}`;
+            const repoUrl = `https://github.com/${repoFullName}`;
 
-          link() {
-            local label="$1"
-            local url="$2"
+            if (eventName === "workflow_dispatch") {
+              const releaseTag = process.env.RELEASE_TAG;
+              const response = releaseTag
+                ? await github.rest.repos.getReleaseByTag({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    tag: releaseTag,
+                  })
+                : await github.rest.repos.getLatestRelease({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                  });
 
-            if [ -n "$url" ] && [ "$url" != "null" ]; then
-              printf '[%s](%s)' "$label" "$url"
-            else
-              printf '%s' "$label"
-            fi
-          }
+              eventName = "release";
+              event = {
+                action: "published",
+                repository: {
+                  full_name: repoFullName,
+                  html_url: repoUrl,
+                },
+                sender: {
+                  login: context.actor,
+                },
+                release: response.data,
+              };
+            }
 
-          trim_ref() {
-            printf '%s' "$1" | sed -E 's#^refs/heads/##; s#^refs/tags/##'
-          }
+            const discordPayload = buildDiscordPayload(eventName, event);
+            const discordResponse = await fetch(webhookUrl, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+              },
+              body: JSON.stringify(discordPayload),
+            });
 
-          format_release_notes() {
-            printf '%s' "$1" |
-              sed -E 's/\r$//' |
-              sed -E 's/^#{1,6}[[:space:]]+(.+)$/\*\*\1\*\*/' |
-              awk 'BEGIN{blank=0} NF{blank=0; print; next} blank==0{print; blank=1}' |
-              head -c 3900
-          }
+            if (!discordResponse.ok) {
+              core.setFailed(
+                `Discord webhook failed with ${discordResponse.status}: ${await discordResponse.text()}`,
+              );
+            }
 
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ -n "${RELEASE_TAG:-}" ]; then
-              RELEASE_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
-            else
-              RELEASE_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest")"
-            fi
-
-            EVENT_NAME="release"
-            ACTION="published"
-            TAG="$(jq -r '.tag_name // "release"' <<<"$RELEASE_JSON")"
-            RELEASE_NAME="$(jq -r '.name // .tag_name // "release"' <<<"$RELEASE_JSON")"
-            RELEASE_URL="$(jq -r '.html_url // empty' <<<"$RELEASE_JSON")"
-            RELEASE_AUTHOR="$(jq -r '.author.login // env.GITHUB_ACTOR // "unknown"' <<<"$RELEASE_JSON")"
-            RELEASE_BODY="$(jq -r '.body // ""' <<<"$RELEASE_JSON")"
-          elif [ "$EVENT_NAME" = "release" ]; then
-            RELEASE_JSON="$(jq -c '.release' "$EVENT_FILE")"
-            ACTION="$(jq -r '.action // "published"' "$EVENT_FILE")"
-            TAG="$(jq -r '.tag_name // "release"' <<<"$RELEASE_JSON")"
-            RELEASE_NAME="$(jq -r '.name // .tag_name // "release"' <<<"$RELEASE_JSON")"
-            RELEASE_URL="$(jq -r '.html_url // empty' <<<"$RELEASE_JSON")"
+            function buildDiscordPayload(eventName, event) {
+              return {
+                username: "Repo Changelog",
+                content: buildContent(eventName, event),
+                embeds: [
