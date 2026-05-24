@@ -19,14 +19,14 @@ function showStub(modelInfo: Record<string, unknown>): OllamaShowResponse {
 }
 
 describe("discoverModels — context window resolution", () => {
-	it("uses known table context window without calling /api/show", async () => {
-		let showCalled = false;
+	it("uses known table context window when /api/show returns no context_length", async () => {
+		// /api/show is now called unconditionally (for capabilities detection), but
+		// when it returns no context_length the table still wins for contextWindow.
 		const models = await discoverModels({
 			listModels: async () => tagsStub("llama3.2:latest", "3B"),
-			showModel: async () => { showCalled = true; throw new Error("should not be called"); },
+			showModel: async () => showStub({}),
 		});
 		assert.equal(models[0].contextWindow, 131072);
-		assert.equal(showCalled, false);
 	});
 
 	it("uses context_length from /api/show model_info for unknown model", async () => {
@@ -51,5 +51,81 @@ describe("discoverModels — context window resolution", () => {
 			showModel: async () => { throw new Error("network error"); },
 		});
 		assert.equal(models[0].contextWindow, 8192);
+	});
+});
+
+describe("enrichModel — capability detection via /api/show.capabilities", () => {
+	it("treats showCapabilities['thinking'] as reasoning=true for an unknown model", async () => {
+		const deps = {
+			listModels: async () => ({ models: [{
+				name: "novel-reasoning-model:cloud",
+				model: "novel-reasoning-model:cloud",
+				modified_at: "",
+				size: 0,
+				digest: "x",
+				details: { parameter_size: "", families: [], format: "", family: "", parameter_size_str: "", quantization_level: "" },
+			}] }),
+			showModel: async () => ({
+				modelfile: "",
+				parameters: "",
+				template: "",
+				details: {} as never,
+				model_info: { "novel.context_length": 131072 },
+				capabilities: ["thinking", "completion"],
+			}),
+		};
+		const [m] = await discoverModels(deps);
+		assert.equal(m.reasoning, true, "showCapabilities['thinking'] must set reasoning=true even when KNOWN_MODELS has no entry");
+	});
+
+	it("treats empty showCapabilities as reasoning=false even when KNOWN_MODELS has a reasoning entry — false (defined) wins over ?? fallthrough", async () => {
+		// llama3.1 in KNOWN_MODELS has no reasoning entry — pick a name where the table WOULD claim reasoning if asked.
+		// deepseek-r1 has `reasoning: true` in KNOWN_MODELS. If /api/show says capabilities = [] (no thinking),
+		// the ?? chain must NOT fall through to caps.reasoning. Empty array's includes('thinking') is false,
+		// which is a *defined* boolean, so ?? does not advance.
+		const deps = {
+			listModels: async () => ({ models: [{
+				name: "deepseek-r1:7b",
+				model: "deepseek-r1:7b",
+				modified_at: "",
+				size: 0,
+				digest: "x",
+				details: { parameter_size: "7B", families: [], format: "", family: "", parameter_size_str: "", quantization_level: "" },
+			}] }),
+			showModel: async () => ({
+				modelfile: "",
+				parameters: "",
+				template: "",
+				details: {} as never,
+				model_info: { "deepseek.context_length": 131072 },
+				capabilities: [],
+			}),
+		};
+		const [m] = await discoverModels(deps);
+		assert.equal(m.reasoning, false,
+			"showCapabilities=[] returns false from includes(), which is *defined*; ?? must stop there, NOT fall through to caps.reasoning=true");
+	});
+
+	it("treats showCapabilities['vision'] as input including 'image'", async () => {
+		const deps = {
+			listModels: async () => ({ models: [{
+				name: "novel-vision-model:cloud",
+				model: "novel-vision-model:cloud",
+				modified_at: "",
+				size: 0,
+				digest: "x",
+				details: { parameter_size: "", families: [], format: "", family: "", parameter_size_str: "", quantization_level: "" },
+			}] }),
+			showModel: async () => ({
+				modelfile: "",
+				parameters: "",
+				template: "",
+				details: {} as never,
+				model_info: { "vision.context_length": 8192 },
+				capabilities: ["vision", "completion"],
+			}),
+		};
+		const [m] = await discoverModels(deps);
+		assert.ok(m.input.includes("image"), "showCapabilities['vision'] must include 'image' in model.input");
 	});
 });

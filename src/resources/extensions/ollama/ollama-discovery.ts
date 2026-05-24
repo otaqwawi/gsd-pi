@@ -15,7 +15,7 @@ import {
 	getModelCapabilities,
 	humanizeModelName,
 } from "./model-capabilities.js";
-import type { OllamaChatOptions, OllamaModelInfo } from "./types.js";
+import type { OllamaChatOptions, OllamaModelInfo, OllamaShowResponse } from "./types.js";
 
 /**
  * Extract context window from /api/show model_info.
@@ -57,16 +57,20 @@ async function enrichModel(info: OllamaModelInfo, deps: ClientDeps): Promise<Dis
 	const caps = getModelCapabilities(info.name);
 	const parameterSize = info.details?.parameter_size ?? "";
 
-	// /api/tags doesn't include context length; /api/show does via "{arch}.context_length" in model_info.
+	// Always call /api/show — it carries two pieces of info absent from /api/tags:
+	// the per-architecture context_length, and (ollama 0.4+) a `capabilities` array
+	// like ["thinking", "completion", "tools"]. The capabilities array is the
+	// authoritative source for reasoning detection on cloud-routed models that
+	// don't appear in the static KNOWN_MODELS table.
 	let showContextWindow: number | undefined;
-	if (caps.contextWindow === undefined) {
-		try {
-			const showData = await deps.showModel(info.name);
-			showContextWindow = extractContextFromModelInfo(showData.model_info);
-		} catch (err) {
-			// non-fatal: fall through to estimate
-			if (process.env.GSD_DEBUG) console.warn(`[ollama] /api/show failed for ${info.name}:`, err instanceof Error ? err.message : String(err));
-		}
+	let showCapabilities: string[] | undefined;
+	try {
+		const showData = await deps.showModel(info.name);
+		showContextWindow = extractContextFromModelInfo(showData.model_info);
+		showCapabilities = showData.capabilities;
+	} catch (err) {
+		// non-fatal: fall through to table/estimate
+		if (process.env.GSD_DEBUG) console.warn(`[ollama] /api/show failed for ${info.name}:`, err instanceof Error ? err.message : String(err));
 	}
 
 	// Determine context window: known table > /api/show > estimate from param size > default
@@ -79,13 +83,17 @@ async function enrichModel(info: OllamaModelInfo, deps: ClientDeps): Promise<Dis
 	const maxTokens =
 		caps.maxTokens ?? Math.min(Math.floor(contextWindow / 4), 16384);
 
-	// Detect vision from families or known table
+	// Detect vision: /api/show capabilities > known table > model families heuristic
 	const hasVision =
+		showCapabilities?.includes("vision") ??
 		caps.input?.includes("image") ??
 		(info.details?.families?.some((f) => f === "clip" || f === "mllama") ?? false);
 
-	// Detect reasoning from known table
-	const reasoning = caps.reasoning ?? false;
+	// Detect reasoning: /api/show capabilities (authoritative) > known table fallback
+	const reasoning =
+		showCapabilities?.includes("thinking") ??
+		caps.reasoning ??
+		false;
 
 	return {
 		id: info.name,
@@ -103,6 +111,14 @@ async function enrichModel(info: OllamaModelInfo, deps: ClientDeps): Promise<Dis
 
 /**
  * Discover all locally available Ollama models with enriched capabilities.
+ *
+ * /api/show is now invoked for every model (capabilities + context_length
+ * both live there). Requests are dispatched concurrently here, but ollama's
+ * local server serializes model-metadata calls internally, so wall time
+ * scales linearly with model count — empirically ~50-100 ms/model on a warm
+ * ollama instance. A user with 30+ models pays ~3 s on app start. If this
+ * becomes a complaint, gate the call on `caps.contextWindow === undefined`
+ * and `caps.reasoning === undefined` (i.e., unknown-model fast path).
  */
 export async function discoverModels(deps: ClientDeps = { listModels, showModel }): Promise<DiscoveredOllamaModel[]> {
 	const tags = await deps.listModels();
