@@ -69,7 +69,9 @@ export async function listModels(
 
 	// Get models — include discovered if discovery was run
 	const models = options.discover
-		? modelRegistry.getAllWithDiscovered()
+		? modelRegistry
+				.getAllWithDiscovered()
+				.filter((model) => modelRegistry.isProviderRequestReady(model.provider))
 		: modelRegistry.getAvailable();
 
 	if (models.length === 0) {
