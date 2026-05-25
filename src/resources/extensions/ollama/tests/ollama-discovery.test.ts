@@ -18,6 +18,10 @@ function showStub(modelInfo: Record<string, unknown>): OllamaShowResponse {
 	return { modelfile: "", parameters: "", template: "", details: EMPTY_DETAILS, model_info: modelInfo };
 }
 
+function showWithCapabilities(modelInfo: Record<string, unknown>, capabilities: string[]): OllamaShowResponse {
+	return { ...showStub(modelInfo), capabilities };
+}
+
 describe("discoverModels — context window resolution", () => {
 	it("uses known table context window when /api/show returns no context_length", async () => {
 		// /api/show is now called unconditionally (for capabilities detection), but
@@ -57,22 +61,8 @@ describe("discoverModels — context window resolution", () => {
 describe("enrichModel — capability detection via /api/show.capabilities", () => {
 	it("treats showCapabilities['thinking'] as reasoning=true for an unknown model", async () => {
 		const deps = {
-			listModels: async () => ({ models: [{
-				name: "novel-reasoning-model:cloud",
-				model: "novel-reasoning-model:cloud",
-				modified_at: "",
-				size: 0,
-				digest: "x",
-				details: { parameter_size: "", families: [], format: "", family: "", parameter_size_str: "", quantization_level: "" },
-			}] }),
-			showModel: async () => ({
-				modelfile: "",
-				parameters: "",
-				template: "",
-				details: {} as never,
-				model_info: { "novel.context_length": 131072 },
-				capabilities: ["thinking", "completion"],
-			}),
+			listModels: async () => ({ models: [modelStub("novel-reasoning-model:cloud")] }),
+			showModel: async () => showWithCapabilities({ "novel.context_length": 131072 }, ["thinking", "completion"]),
 		};
 		const [m] = await discoverModels(deps);
 		assert.equal(m.reasoning, true, "showCapabilities['thinking'] must set reasoning=true even when KNOWN_MODELS has no entry");
@@ -84,22 +74,8 @@ describe("enrichModel — capability detection via /api/show.capabilities", () =
 		// the ?? chain must NOT fall through to caps.reasoning. Empty array's includes('thinking') is false,
 		// which is a *defined* boolean, so ?? does not advance.
 		const deps = {
-			listModels: async () => ({ models: [{
-				name: "deepseek-r1:7b",
-				model: "deepseek-r1:7b",
-				modified_at: "",
-				size: 0,
-				digest: "x",
-				details: { parameter_size: "7B", families: [], format: "", family: "", parameter_size_str: "", quantization_level: "" },
-			}] }),
-			showModel: async () => ({
-				modelfile: "",
-				parameters: "",
-				template: "",
-				details: {} as never,
-				model_info: { "deepseek.context_length": 131072 },
-				capabilities: [],
-			}),
+			listModels: async () => ({ models: [modelStub("deepseek-r1:7b", "7B")] }),
+			showModel: async () => showWithCapabilities({ "deepseek.context_length": 131072 }, []),
 		};
 		const [m] = await discoverModels(deps);
 		assert.equal(m.reasoning, false,
@@ -108,22 +84,8 @@ describe("enrichModel — capability detection via /api/show.capabilities", () =
 
 	it("treats showCapabilities['vision'] as input including 'image'", async () => {
 		const deps = {
-			listModels: async () => ({ models: [{
-				name: "novel-vision-model:cloud",
-				model: "novel-vision-model:cloud",
-				modified_at: "",
-				size: 0,
-				digest: "x",
-				details: { parameter_size: "", families: [], format: "", family: "", parameter_size_str: "", quantization_level: "" },
-			}] }),
-			showModel: async () => ({
-				modelfile: "",
-				parameters: "",
-				template: "",
-				details: {} as never,
-				model_info: { "vision.context_length": 8192 },
-				capabilities: ["vision", "completion"],
-			}),
+			listModels: async () => ({ models: [modelStub("novel-vision-model:cloud")] }),
+			showModel: async () => showWithCapabilities({ "vision.context_length": 8192 }, ["vision", "completion"]),
 		};
 		const [m] = await discoverModels(deps);
 		assert.ok(m.input.includes("image"), "showCapabilities['vision'] must include 'image' in model.input");
