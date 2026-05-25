@@ -9,11 +9,13 @@ import {
   readRoadmap,
   registerWorkflowTools,
   runDoctorLite,
+  WORKFLOW_TOOL_NAMES,
 } from "@opengsd/mcp-server";
 import type { SessionManager } from "./session-manager.js";
 import type { ProjectInfo } from "./types.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
+const WORKFLOW_TOOL_NAME_SET = new Set<string>(WORKFLOW_TOOL_NAMES);
 
 export class LocalToolExecutor {
   private readonly workflowHandlers = new Map<string, ToolHandler>();
@@ -24,6 +26,7 @@ export class LocalToolExecutor {
   ) {
     registerWorkflowTools({
       tool: (name: string, _description: string, _params: Record<string, unknown>, handler: ToolHandler) => {
+        if (!WORKFLOW_TOOL_NAME_SET.has(name)) return;
         this.workflowHandlers.set(name, handler);
       },
     });
@@ -36,7 +39,10 @@ export class LocalToolExecutor {
     }
 
     const workflow = this.workflowHandlers.get(toolName);
-    if (workflow) return workflow(args);
+    if (WORKFLOW_TOOL_NAME_SET.has(toolName)) {
+      if (!workflow) throw new Error(`Unsupported forwarded GSD MCP tool: ${toolName}`);
+      return this.executeWorkflowHandler(workflow, args);
+    }
 
     switch (toolName) {
       case "gsd_execute": {
@@ -108,6 +114,10 @@ export class LocalToolExecutor {
     const projects = await this.scanProjects();
     const match = projects.find((project) => project.name === aliasOrPath || project.path === aliasOrPath);
     return match?.path ?? aliasOrPath;
+  }
+
+  private executeWorkflowHandler(handler: ToolHandler, args: Record<string, unknown>): Promise<unknown> {
+    return handler(args);
   }
 }
 

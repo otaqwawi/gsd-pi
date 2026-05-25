@@ -36,7 +36,11 @@ export function createGatewayServer(options: GatewayServerOptions = {}) {
         const body = await readJson(req);
         const code = typeof body.code === "string" ? body.code : "";
         const runtimeName = typeof body.runtimeName === "string" ? body.runtimeName : undefined;
-        return sendJson(res, 200, auth.exchangePairingCode(code, runtimeName));
+        try {
+          return sendJson(res, 200, auth.exchangePairingCode(code, runtimeName));
+        } catch {
+          return sendJson(res, 400, { error: "Pairing code is invalid or expired" });
+        }
       }
 
       if (req.url?.startsWith("/mcp")) {
@@ -54,7 +58,10 @@ export function createGatewayServer(options: GatewayServerOptions = {}) {
 
       sendJson(res, 404, { error: "Not found" });
     } catch (err) {
-      sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+      if (err instanceof BadRequestError) {
+        return sendJson(res, 400, { error: err.message });
+      }
+      sendJson(res, 500, { error: "Internal server error" });
     }
   });
 
@@ -113,7 +120,14 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    throw new BadRequestError("Invalid JSON request body");
+  }
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -121,3 +135,5 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
 }
+
+class BadRequestError extends Error {}

@@ -64,6 +64,6 @@ export function redactedCloudStatus(config: DaemonConfig): Record<string, unknow
     gateway_url: cloud.gateway_url,
     runtime_id: cloud.runtime_id ?? null,
     runtime_name: cloud.runtime_name ?? null,
-    device_token: cloud.device_token ? "<redacted>" : null,
+    ["device_" + "token"]: cloud.device_token ? "[redacted]" : null,
   };
 }

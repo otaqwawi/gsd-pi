@@ -82,6 +82,18 @@ export class InMemoryAuthStore {
 
 export function extractBearerToken(header: string | string[] | undefined): string | undefined {
   const value = Array.isArray(header) ? header[0] : header;
-  const match = value?.match(/^Bearer\s+(.+)$/i);
-  return match?.[1];
+  if (!value || value.length <= "Bearer ".length) return undefined;
+  if (value.slice(0, "Bearer".length).toLowerCase() !== "bearer") return undefined;
+
+  const firstSeparator = value.charCodeAt("Bearer".length);
+  if (firstSeparator !== 0x20 && firstSeparator !== 0x09) return undefined;
+
+  let tokenStart = "Bearer".length + 1;
+  while (tokenStart < value.length) {
+    const char = value.charCodeAt(tokenStart);
+    if (char !== 0x20 && char !== 0x09) break;
+    tokenStart += 1;
+  }
+
+  return tokenStart < value.length ? value.slice(tokenStart) : undefined;
 }

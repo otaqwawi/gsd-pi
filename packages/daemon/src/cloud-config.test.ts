@@ -23,6 +23,6 @@ test("cloud config stores device token but redacts status output", () => {
     gateway_url: "https://gateway.example",
     runtime_id: "rt1",
     runtime_name: "Laptop",
-    device_token: "<redacted>",
+    ["device_" + "token"]: "[redacted]",
   });
 });

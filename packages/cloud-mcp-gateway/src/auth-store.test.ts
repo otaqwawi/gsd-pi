@@ -26,5 +26,7 @@ test("pairing code is one-time use", () => {
 test("extractBearerToken parses bearer auth header", () => {
   assert.equal(extractBearerToken("Bearer abc"), "abc");
   assert.equal(extractBearerToken("bearer abc"), "abc");
+  assert.equal(extractBearerToken("Bearer\t\tabc"), "abc");
   assert.equal(extractBearerToken("Basic abc"), undefined);
+  assert.equal(extractBearerToken(`bearer\t${"\t".repeat(10_000)}`), undefined);
 });
