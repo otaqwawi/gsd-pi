@@ -58,6 +58,7 @@ export {
 export {
 	notifyProviderSwitchObserver,
 	setProviderSwitchObserver,
+	transformMessagesWithReport,
 	type ProviderSwitchObserver,
 	type ProviderSwitchReport,
 } from "./providers/transform-messages.js";

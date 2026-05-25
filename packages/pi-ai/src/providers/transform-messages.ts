@@ -23,6 +23,28 @@ export type ProviderSwitchObserver = (report: ProviderSwitchReport) => void;
 
 let providerSwitchObserver: ProviderSwitchObserver | undefined;
 
+function makeEmptyReport(fromApi: string, toApi: string): ProviderSwitchReport {
+	return {
+		fromApi,
+		toApi,
+		thinkingBlocksDropped: 0,
+		thinkingBlocksDowngraded: 0,
+		toolCallIdsRemapped: 0,
+		syntheticToolResultsInserted: 0,
+		thoughtSignaturesDropped: 0,
+	};
+}
+
+function hasReportChanges(report: ProviderSwitchReport): boolean {
+	return (
+		report.thinkingBlocksDropped > 0 ||
+		report.thinkingBlocksDowngraded > 0 ||
+		report.toolCallIdsRemapped > 0 ||
+		report.syntheticToolResultsInserted > 0 ||
+		report.thoughtSignaturesDropped > 0
+	);
+}
+
 export function setProviderSwitchObserver(observer: ProviderSwitchObserver | undefined): void {
 	providerSwitchObserver = observer;
 }
@@ -92,9 +114,19 @@ export function transformMessages<TApi extends Api>(
 	model: Model<TApi>,
 	normalizeToolCallId?: (id: string, model: Model<TApi>, source: AssistantMessage) => string,
 ): Message[] {
+	return transformMessagesWithReport(messages, model, normalizeToolCallId);
+}
+
+export function transformMessagesWithReport<TApi extends Api>(
+	messages: Message[],
+	model: Model<TApi>,
+	normalizeToolCallId?: (id: string, model: Model<TApi>, source: AssistantMessage) => string,
+	sourceApi?: string,
+): Message[] {
 	// Build a map of original tool call IDs to normalized IDs
 	const toolCallIdMap = new Map<string, string>();
 	const imageAwareMessages = downgradeUnsupportedImages(messages, model);
+	const report = makeEmptyReport(sourceApi ?? model.api, model.api);
 
 	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
 	const transformed = imageAwareMessages.map((msg) => {
@@ -125,6 +157,9 @@ export function transformMessages<TApi extends Api>(
 					// Redacted thinking is opaque encrypted content, only valid for the same model.
 					// Drop it for cross-model to avoid API errors.
 					if (block.redacted) {
+						if (!isSameModel) {
+							report.thinkingBlocksDropped += 1;
+						}
 						return isSameModel ? block : [];
 					}
 					// For same model: keep thinking blocks with signatures (needed for replay)
@@ -133,6 +168,7 @@ export function transformMessages<TApi extends Api>(
 					// Skip empty thinking blocks, convert others to plain text
 					if (!block.thinking || block.thinking.trim() === "") return [];
 					if (isSameModel) return block;
+					report.thinkingBlocksDowngraded += 1;
 					return {
 						type: "text" as const,
 						text: block.thinking,
@@ -154,6 +190,7 @@ export function transformMessages<TApi extends Api>(
 					if (!isSameModel && toolCall.thoughtSignature) {
 						normalizedToolCall = { ...toolCall };
 						delete (normalizedToolCall as { thoughtSignature?: string }).thoughtSignature;
+						report.thoughtSignaturesDropped += 1;
 					}
 
 					if (!isSameModel && normalizeToolCallId) {
@@ -161,6 +198,7 @@ export function transformMessages<TApi extends Api>(
 						if (normalizedId !== toolCall.id) {
 							toolCallIdMap.set(toolCall.id, normalizedId);
 							normalizedToolCall = { ...normalizedToolCall, id: normalizedId };
+							report.toolCallIdsRemapped += 1;
 						}
 					}
 
@@ -187,6 +225,7 @@ export function transformMessages<TApi extends Api>(
 		if (pendingToolCalls.length > 0) {
 			for (const tc of pendingToolCalls) {
 				if (!existingToolResultIds.has(tc.id)) {
+					report.syntheticToolResultsInserted += 1;
 					result.push({
 						role: "toolResult",
 						toolCallId: tc.id,
@@ -241,6 +280,10 @@ export function transformMessages<TApi extends Api>(
 
 	// If the conversation ends with unresolved tool calls, synthesize results now.
 	insertSyntheticToolResults();
+
+	if (hasReportChanges(report)) {
+		notifyProviderSwitchObserver(report);
+	}
 
 	return result;
 }
