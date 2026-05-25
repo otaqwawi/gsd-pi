@@ -8,12 +8,50 @@
  * - Interact with the user via UI primitives
  */
 
+export type {
+	AdjustToolSetEvent,
+	AdjustToolSetResult,
+	BashTransformEvent,
+	BashTransformEventResult,
+	BeforeCommitEvent,
+	BeforeCommitEventResult,
+	BeforeModelSelectEvent,
+	BeforeModelSelectResult,
+	BeforePrEvent,
+	BeforePrEventResult,
+	BeforePushEvent,
+	BeforePushEventResult,
+	BeforeVerifyEvent,
+	BeforeVerifyEventResult,
+	BudgetThresholdEvent,
+	BudgetThresholdEventResult,
+	CommitEvent,
+	MilestoneEndEvent,
+	MilestoneStartEvent,
+	NotificationEvent,
+	PrOpenedEvent,
+	PushEvent,
+	SessionEndEvent,
+	SessionForkEvent,
+	SessionSwitchEvent,
+	StopEvent,
+	ToolCompatibility,
+	ToolFormatValidationErrorEvent,
+	ToolFormatValidationErrorEventResult,
+	ToolPreparationErrorsTurnEvent,
+	ToolPreparationErrorsTurnEventResult,
+	UnitEndEvent,
+	UnitStartEvent,
+	VerifyFailure,
+	VerifyResultEvent,
+} from "../gsd-extension-types.js";
+
 import type {
-	AgentAbortOrigin,
 	AgentMessage,
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
+	ToolExecutionMode,
 } from "@gsd/pi-agent-core";
 import type {
 	Api,
@@ -30,6 +68,7 @@ import type {
 } from "@gsd/pi-ai";
 import type {
 	AutocompleteItem,
+	AutocompleteProvider,
 	Component,
 	EditorComponent,
 	EditorTheme,
@@ -38,16 +77,55 @@ import type {
 	OverlayOptions,
 	TUI,
 } from "@gsd/pi-tui";
-import type { Static, TSchema } from "@sinclair/typebox";
-import type { Theme } from "../../modes/interactive/theme/theme.js";
-import type { BashResult } from "../bash-executor.js";
-import type { CompactionPreparation, CompactionResult } from "../compaction/index.js";
+import type { Static, TSchema } from "typebox";
+import type { Theme } from "../../theme/theme.js";
+import type { BashResult, CompactionPreparation, CompactionResult } from "../gsd-seam-types.js";
+import type {
+	AdjustToolSetEvent,
+	AdjustToolSetResult,
+	BashTransformEvent,
+	BashTransformEventResult,
+	BeforeCommitEvent,
+	BeforeCommitEventResult,
+	BeforeModelSelectEvent,
+	BeforeModelSelectResult,
+	BeforePrEvent,
+	BeforePrEventResult,
+	BeforePushEvent,
+	BeforePushEventResult,
+	BeforeVerifyEvent,
+	BeforeVerifyEventResult,
+	BudgetThresholdEvent,
+	BudgetThresholdEventResult,
+	CommitEvent,
+	GsdExtensionEvent,
+	MilestoneEndEvent,
+	MilestoneStartEvent,
+	NotificationEvent,
+	PrOpenedEvent,
+	PushEvent,
+	SessionEndEvent,
+	SessionForkEvent,
+	SessionSwitchEvent,
+	StopEvent,
+	ToolCompatibility,
+	ToolFormatValidationErrorEvent,
+	ToolFormatValidationErrorEventResult,
+	ToolPreparationErrorsTurnEvent,
+	ToolPreparationErrorsTurnEventResult,
+	UnitEndEvent,
+	UnitStartEvent,
+	VerifyFailure,
+	VerifyResultEvent,
+} from "../gsd-extension-types.js";
 import type { EventBus } from "../event-bus.js";
 import type { ExecOptions, ExecResult } from "../exec.js";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.js";
 import type { KeybindingsManager } from "../keybindings.js";
 import type { CustomMessage } from "../messages.js";
 import type { ModelRegistry } from "../model-registry.js";
+import type { BuildSystemPromptOptions } from "../system-prompt.js";
+import type { BashOperations } from "../tools/bash.js";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
@@ -56,7 +134,7 @@ import type {
 	SessionManager,
 } from "../session-manager.js";
 import type { SlashCommandInfo } from "../slash-commands.js";
-import type { BashOperations } from "../tools/bash.js";
+import type { SourceInfo } from "../source-info.js";
 import type { EditToolDetails } from "../tools/edit.js";
 import type {
 	BashToolDetails,
@@ -70,13 +148,13 @@ import type {
 	LsToolInput,
 	ReadToolDetails,
 	ReadToolInput,
-	WriteToolDetails,
 	WriteToolInput,
 } from "../tools/index.js";
 
 export type { ExecOptions, ExecResult } from "../exec.js";
-export type { AgentToolResult, AgentToolUpdateCallback };
-export type { AppAction, KeybindingsManager } from "../keybindings.js";
+export type { BuildSystemPromptOptions } from "../system-prompt.js";
+export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
+export type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
 
 // ============================================================================
 // UI Context
@@ -88,9 +166,9 @@ export interface ExtensionUIDialogOptions {
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
 	timeout?: number;
-	/** When true, the user can select multiple options. The return type becomes `string[]`. */
+	/** Allow selecting multiple options (select dialog). */
 	allowMultiple?: boolean;
-	/** When true, text input dialogs should hide typed characters if supported by the client surface. */
+	/** Mask input (password-style). */
 	secure?: boolean;
 }
 
@@ -106,12 +184,24 @@ export interface ExtensionWidgetOptions {
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
+/** Working indicator configuration for the interactive streaming loader. */
+export interface WorkingIndicatorOptions {
+	/** Animation frames. Use an empty array to hide the indicator entirely. Custom frames are rendered verbatim. */
+	frames?: string[];
+	/** Frame interval in milliseconds for animated indicators. */
+	intervalMs?: number;
+}
+
+/** Wrap the current autocomplete provider with additional behavior. */
+export type AutocompleteProviderFactory = (current: AutocompleteProvider) => AutocompleteProvider;
+export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent;
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
  */
 export interface ExtensionUIContext {
-	/** Show a selector and return the user's choice. When `opts.allowMultiple` is true, returns an array. */
+	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | string[] | undefined>;
 
 	/** Show a confirmation dialog. */
@@ -129,8 +219,24 @@ export interface ExtensionUIContext {
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;
 
-	/** Set the working/loading message shown during streaming. Call with no argument to restore default; pass null to suppress it. */
+	/** Set the working/loading message shown during streaming. Call with no argument to restore default. */
 	setWorkingMessage(message?: string | null): void;
+
+	/** Show or hide the built-in interactive working loader row during streaming. */
+	setWorkingVisible(visible: boolean): void;
+
+	/**
+	 * Configure the interactive working indicator shown during streaming.
+	 *
+	 * - Omit the argument to restore the default animated spinner.
+	 * - Use `frames: ["●"]` for a static indicator.
+	 * - Use `frames: []` to hide the indicator entirely.
+	 * - Custom frames are rendered as provided, so extensions must add their own colors.
+	 */
+	setWorkingIndicator(options?: WorkingIndicatorOptions): void;
+
+	/** Set the label shown for hidden thinking blocks. Call with no argument to restore default. */
+	setHiddenThinkingLabel(label?: string): void;
 
 	/** Set a widget to display above or below the editor. Accepts string array or component factory. */
 	setWidget(key: string, content: string[] | undefined, options?: ExtensionWidgetOptions): void;
@@ -187,6 +293,9 @@ export interface ExtensionUIContext {
 	/** Show a multi-line editor for text editing. */
 	editor(title: string, prefill?: string): Promise<string | undefined>;
 
+	/** Stack additional autocomplete behavior on top of the built-in provider. */
+	addAutocompleteProvider(factory: AutocompleteProviderFactory): void;
+
 	/**
 	 * Set a custom editor component via factory function.
 	 * Pass undefined to restore the default editor.
@@ -220,9 +329,10 @@ export interface ExtensionUIContext {
 	 * );
 	 * ```
 	 */
-	setEditorComponent(
-		factory: ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent) | undefined,
-	): void;
+	setEditorComponent(factory: EditorFactory | undefined): void;
+
+	/** Get the currently configured custom editor factory, or undefined when using the default editor. */
+	getEditorComponent(): EditorFactory | undefined;
 
 	/** Get the current theme for styling. */
 	readonly theme: Theme;
@@ -279,6 +389,8 @@ export interface ExtensionContext {
 	model: Model<any> | undefined;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
+	/** The current abort signal, or undefined when the agent is not streaming. */
+	signal: AbortSignal | undefined;
 	/** Abort the current agent operation */
 	abort(): void;
 	/** Whether there are queued messages waiting */
@@ -291,12 +403,8 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
-	/**
-	 * Set or clear an in-memory compaction threshold-percent override (0 < value < 1).
-	 * Pass `undefined` to clear. The override is not persisted; host integrations
-	 * are expected to re-apply on each session_start.
-	 */
-	setCompactionThresholdOverride(percent: number | undefined): void;
+	/** GSD compat: override compaction threshold for this session. */
+	setCompactionThresholdOverride?(percent?: number): void;
 }
 
 /**
@@ -310,19 +418,17 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Start a new session, optionally with initialization. */
 	newSession(options?: {
 		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
-		/** Explicit workspace root for the new session/tool runtime.
-		 *  When omitted, newSession() captures process.cwd() for backwards compatibility. */
 		workspaceRoot?: string;
-		/** When aborted before the session is fully configured, newSession() returns
-		 *  early without rebuilding the tool runtime. Used by runUnit() to discard
-		 *  a late-resolving newSession() after the session-creation timeout fires,
-		 *  preventing the tool runtime from being rebuilt with a stale workspace root (#3731). */
 		abortSignal?: AbortSignal;
+		setup?: (sessionManager: SessionManager) => Promise<void>;
+		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}): Promise<{ cancelled: boolean }>;
 
 	/** Fork from a specific entry, creating a new session file. */
-	fork(entryId: string): Promise<{ cancelled: boolean }>;
+	fork(
+		entryId: string,
+		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
+	): Promise<{ cancelled: boolean }>;
 
 	/** Navigate to a different point in the session tree. */
 	navigateTree(
@@ -331,10 +437,30 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	): Promise<{ cancelled: boolean }>;
 
 	/** Switch to a different session file. */
-	switchSession(sessionPath: string): Promise<{ cancelled: boolean }>;
+	switchSession(
+		sessionPath: string,
+		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
+	): Promise<{ cancelled: boolean }>;
 
 	/** Reload extensions, skills, prompts, and themes. */
 	reload(): Promise<void>;
+}
+
+/**
+ * Fresh command-capable context bound to the replacement session after a session switch.
+ *
+ * This is passed to `withSession()` callbacks on `newSession()`, `fork()`, and `switchSession()`.
+ */
+export interface ReplacedSessionContext extends ExtensionCommandContext {
+	sendMessage<T = unknown>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	): Promise<void>;
+
+	sendUserMessage(
+		content: string | (TextContent | ImageContent)[],
+		options?: { deliverAs?: "steer" | "followUp" },
+	): Promise<void>;
 }
 
 // ============================================================================
@@ -349,30 +475,45 @@ export interface ToolRenderResultOptions {
 	isPartial: boolean;
 }
 
-/**
- * Tool compatibility metadata for provider-aware tool filtering (ADR-005 Phase 2).
- * Tools without compatibility metadata are assumed universally compatible.
- */
-export interface ToolCompatibility {
-	/** Tool produces image content in results (filtered for providers without imageToolResults) */
-	producesImages?: boolean;
-	/** Tool requires schema features that some providers don't support (e.g., ["patternProperties"]) */
-	schemaFeatures?: string[];
-	/** Tool is effective only with models above a minimum capability threshold */
-	minCapabilityTier?: "light" | "standard" | "heavy";
+/** Context passed to tool renderers. */
+export interface ToolRenderContext<TState = any, TArgs = any> {
+	/** Current tool call arguments. Shared across call/result renders for the same tool call. */
+	args: TArgs;
+	/** Unique id for this tool execution. Stable across call/result renders for the same tool call. */
+	toolCallId: string;
+	/** Invalidate just this tool execution component for redraw. */
+	invalidate: () => void;
+	/** Previously returned component for this render slot, if any. */
+	lastComponent: Component | undefined;
+	/** Shared renderer state for this tool row. Initialized by tool-execution.ts. */
+	state: TState;
+	/** Working directory for this tool execution. */
+	cwd: string;
+	/** Whether the tool execution has started. */
+	executionStarted: boolean;
+	/** Whether the tool call arguments are complete. */
+	argsComplete: boolean;
+	/** Whether the tool result is partial/streaming. */
+	isPartial: boolean;
+	/** Whether the result view is expanded. */
+	expanded: boolean;
+	/** Whether inline images are currently shown in the TUI. */
+	showImages: boolean;
+	/** Whether the current result is an error. */
+	isError: boolean;
 }
 
 /**
  * Tool definition for registerTool().
  */
-export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown> {
+export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
 	/** Tool name (used in LLM tool calls) */
 	name: string;
 	/** Human-readable label for UI */
 	label: string;
 	/** Description for LLM */
 	description: string;
-	/** Optional one-line snippet for the Available tools section in the default system prompt. Falls back to description when omitted. */
+	/** Optional one-line snippet for the Available tools section in the default system prompt. Custom tools are omitted from that section when this is not provided. */
 	promptSnippet?: string;
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];
@@ -380,6 +521,20 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	parameters: TParams;
 	/** Provider compatibility metadata (ADR-005). Omit for universally compatible tools. */
 	compatibility?: ToolCompatibility;
+	/** Controls whether ToolExecutionComponent renders the standard colored shell or the tool renders its own framing. */
+	renderShell?: "default" | "self";
+
+	/** Optional compatibility shim to prepare raw tool call arguments before schema validation. Must return an object conforming to TParams. */
+	prepareArguments?: (args: unknown) => Static<TParams>;
+
+	/**
+	 * Per-tool execution mode override.
+	 * - "sequential": this tool must execute one at a time with other tool calls.
+	 * - "parallel": this tool can execute concurrently with other tool calls.
+	 *
+	 * If omitted, the default execution mode applies.
+	 */
+	executionMode?: ToolExecutionMode;
 
 	/** Execute the tool. */
 	execute(
@@ -391,14 +546,30 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	): Promise<AgentToolResult<TDetails>>;
 
 	/** Custom rendering for tool call display */
-	renderCall?: (args: Static<TParams>, theme: Theme) => Component | undefined;
+	renderCall?: (args: Static<TParams>, theme: Theme, context: ToolRenderContext<TState, Static<TParams>>) => Component;
 
 	/** Custom rendering for tool result display */
 	renderResult?: (
 		result: AgentToolResult<TDetails>,
 		options: ToolRenderResultOptions,
 		theme: Theme,
-	) => Component | undefined;
+		context: ToolRenderContext<TState, Static<TParams>>,
+	) => Component;
+}
+
+type AnyToolDefinition = ToolDefinition<any, any, any>;
+
+/**
+ * Preserve parameter inference for standalone tool definitions.
+ *
+ * Use this when assigning a tool to a variable or passing it through arrays such
+ * as `customTools`, where contextual typing would otherwise widen params to
+ * `unknown`.
+ */
+export function defineTool<TParams extends TSchema, TDetails = unknown, TState = any>(
+	tool: ToolDefinition<TParams, TDetails, TState>,
+): ToolDefinition<TParams, TDetails, TState> & AnyToolDefinition {
+	return tool as ToolDefinition<TParams, TDetails, TState> & AnyToolDefinition;
 }
 
 // ============================================================================
@@ -423,15 +594,13 @@ export interface ResourcesDiscoverResult {
 // Session Events
 // ============================================================================
 
-/** Fired before session manager creation to allow custom session directory resolution */
-export interface SessionDirectoryEvent {
-	type: "session_directory";
-	cwd: string;
-}
-
-/** Fired on initial session load */
+/** Fired when a session is started, loaded, or reloaded */
 export interface SessionStartEvent {
 	type: "session_start";
+	/** Why this session start happened. */
+	reason: "startup" | "reload" | "new" | "resume" | "fork";
+	/** Previously active session file. Present for "new", "resume", and "fork". */
+	previousSessionFile?: string;
 }
 
 /** Fired before switching to another session (can be cancelled) */
@@ -441,23 +610,11 @@ export interface SessionBeforeSwitchEvent {
 	targetSessionFile?: string;
 }
 
-/** Fired after switching to another session */
-export interface SessionSwitchEvent {
-	type: "session_switch";
-	reason: "new" | "resume";
-	previousSessionFile: string | undefined;
-}
-
 /** Fired before forking a session (can be cancelled) */
 export interface SessionBeforeForkEvent {
 	type: "session_before_fork";
 	entryId: string;
-}
-
-/** Fired after forking a session */
-export interface SessionForkEvent {
-	type: "session_fork";
-	previousSessionFile: string | undefined;
+	position: "before" | "at";
 }
 
 /** Fired before context compaction (can be cancelled or customized) */
@@ -476,16 +633,12 @@ export interface SessionCompactEvent {
 	fromExtension: boolean;
 }
 
-/** Fired on process exit */
+/** Fired before an extension runtime is torn down due to quit, reload, or session replacement. */
 export interface SessionShutdownEvent {
 	type: "session_shutdown";
-}
-
-/** Fired when the in-process session ends (distinct from process shutdown). */
-export interface SessionEndEvent {
-	type: "session_end";
-	reason: "user" | "idle" | "error" | "programmatic";
-	sessionFile?: string;
+	reason: "quit" | "reload" | "new" | "resume" | "fork";
+	/** Destination session file when shutting down due to session replacement. */
+	targetSessionFile?: string;
 }
 
 /** Preparation data for tree navigation */
@@ -520,16 +673,15 @@ export interface SessionTreeEvent {
 }
 
 export type SessionEvent =
-	| SessionDirectoryEvent
 	| SessionStartEvent
 	| SessionBeforeSwitchEvent
 	| SessionSwitchEvent
 	| SessionBeforeForkEvent
 	| SessionForkEvent
+	| SessionEndEvent
 	| SessionBeforeCompactEvent
 	| SessionCompactEvent
 	| SessionShutdownEvent
-	| SessionEndEvent
 	| SessionBeforeTreeEvent
 	| SessionTreeEvent;
 
@@ -547,228 +699,38 @@ export interface ContextEvent {
 export interface BeforeProviderRequestEvent {
 	type: "before_provider_request";
 	payload: unknown;
-	/** The resolved model for this request (provider, id, api, etc.) */
 	model?: { provider: string; id: string; api?: string };
+}
+
+/** Fired after a provider response is received and before the response stream is consumed. */
+export interface AfterProviderResponseEvent {
+	type: "after_provider_response";
+	status: number;
+	headers: Record<string, string>;
 }
 
 /** Fired after user submits prompt but before agent loop. */
 export interface BeforeAgentStartEvent {
 	type: "before_agent_start";
+	/** The raw user prompt text (after expansion). */
 	prompt: string;
+	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
+	/** The fully assembled system prompt string. */
 	systemPrompt: string;
+	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
+	systemPromptOptions: BuildSystemPromptOptions;
 }
 
 /** Fired when an agent loop starts */
 export interface AgentStartEvent {
 	type: "agent_start";
-	sessionId?: string;
-	turnId?: string;
 }
 
 /** Fired when an agent loop ends */
 export interface AgentEndEvent {
 	type: "agent_end";
 	messages: AgentMessage[];
-	sessionId?: string;
-	turnId?: string;
-	abortOrigin?: AgentAbortOrigin;
-}
-
-/**
- * Fired when the agent has truly stopped — no follow-up, no steering, no pending turn.
- * Distinct from `agent_end`, which fires on every loop exit (including those that resume).
- * Use this for "the agent is idle and waiting for the user" signals.
- */
-export interface StopEvent {
-	type: "stop";
-	reason: "completed" | "cancelled" | "error" | "blocked";
-	lastMessage?: AgentMessage;
-	sessionId?: string;
-	turnId?: string;
-	abortOrigin?: AgentAbortOrigin;
-}
-
-/**
- * Fired when the agent needs user attention (blocked on a question, idle, milestone ready).
- * Consumed by the Layer 0 shell-hook runner to dispatch `Notification` / `Blocked` hooks.
- */
-export interface NotificationEvent {
-	type: "notification";
-	kind: "blocked" | "input_needed" | "milestone_ready" | "idle" | "error";
-	message: string;
-	details?: Record<string, unknown>;
-}
-
-// ============================================================================
-// Git Lifecycle Events
-// ============================================================================
-
-/** Fired before a commit is created. Handlers can veto or rewrite the message. */
-export interface BeforeCommitEvent {
-	type: "before_commit";
-	message: string;
-	files: string[];
-	cwd: string;
-	author?: string;
-}
-
-/** Result from before_commit event handler. */
-export interface BeforeCommitEventResult {
-	cancel?: boolean;
-	reason?: string;
-	message?: string;
-}
-
-/** Fired after a commit lands. */
-export interface CommitEvent {
-	type: "commit";
-	sha: string;
-	message: string;
-	files: string[];
-	cwd: string;
-}
-
-/** Fired before a git push. Handlers can veto. */
-export interface BeforePushEvent {
-	type: "before_push";
-	remote: string;
-	branch: string;
-	cwd: string;
-}
-
-/** Result from before_push event handler. */
-export interface BeforePushEventResult {
-	cancel?: boolean;
-	reason?: string;
-}
-
-/** Fired after a push completes. */
-export interface PushEvent {
-	type: "push";
-	remote: string;
-	branch: string;
-	cwd: string;
-}
-
-/** Fired before a pull request is opened. Handlers can veto or rewrite title/body. */
-export interface BeforePrEvent {
-	type: "before_pr";
-	branch: string;
-	targetBranch: string;
-	title: string;
-	body: string;
-	cwd: string;
-}
-
-/** Result from before_pr event handler. */
-export interface BeforePrEventResult {
-	cancel?: boolean;
-	reason?: string;
-	title?: string;
-	body?: string;
-}
-
-/** Fired after a pull request is opened. */
-export interface PrOpenedEvent {
-	type: "pr_opened";
-	url: string;
-	branch: string;
-	targetBranch: string;
-	cwd: string;
-}
-
-// ============================================================================
-// Verification Events
-// ============================================================================
-
-/** Fired before verification runs (tests, diagnostics, gates). */
-export interface BeforeVerifyEvent {
-	type: "before_verify";
-	unitType?: string;
-	unitId?: string;
-	cwd: string;
-}
-
-/** Result from before_verify event handler. */
-export interface BeforeVerifyEventResult {
-	cancel?: boolean;
-	reason?: string;
-}
-
-/** A single verification failure. */
-export interface VerifyFailure {
-	kind: "type" | "lint" | "test" | "diagnostic" | "gate" | "other";
-	file?: string;
-	line?: number;
-	message: string;
-}
-
-/** Fired when verification completes. */
-export interface VerifyResultEvent {
-	type: "verify_result";
-	passed: boolean;
-	failures: VerifyFailure[];
-	unitType?: string;
-	unitId?: string;
-	cwd: string;
-}
-
-// ============================================================================
-// Budget Events
-// ============================================================================
-
-/** Fired when the tracked cost crosses a configured fraction of the budget. */
-export interface BudgetThresholdEvent {
-	type: "budget_threshold";
-	fraction: number;
-	spent: number;
-	limit: number;
-	currency: "USD";
-}
-
-/** Result from budget_threshold event handler. */
-export interface BudgetThresholdEventResult {
-	action?: "pause" | "downgrade" | "continue";
-}
-
-// ============================================================================
-// Orchestrator Events (milestone / unit boundaries)
-// ============================================================================
-
-/** Fired at the start of an orchestrator milestone. */
-export interface MilestoneStartEvent {
-	type: "milestone_start";
-	milestoneId: string;
-	title?: string;
-	cwd: string;
-}
-
-/** Fired when a milestone ends. */
-export interface MilestoneEndEvent {
-	type: "milestone_end";
-	milestoneId: string;
-	status: "completed" | "failed" | "cancelled";
-	cwd: string;
-}
-
-/** Fired at the start of an orchestrator unit (sub-task within a milestone). */
-export interface UnitStartEvent {
-	type: "unit_start";
-	unitType: string;
-	unitId: string;
-	milestoneId?: string;
-	cwd: string;
-}
-
-/** Fired when a unit ends. */
-export interface UnitEndEvent {
-	type: "unit_end";
-	unitType: string;
-	unitId: string;
-	milestoneId?: string;
-	status: "completed" | "failed" | "cancelled" | "blocked";
-	cwd: string;
 }
 
 /** Fired at the start of each turn */
@@ -776,8 +738,6 @@ export interface TurnStartEvent {
 	type: "turn_start";
 	turnIndex: number;
 	timestamp: number;
-	sessionId?: string;
-	turnId?: string;
 }
 
 /** Fired at the end of each turn */
@@ -786,16 +746,12 @@ export interface TurnEndEvent {
 	turnIndex: number;
 	message: AgentMessage;
 	toolResults: ToolResultMessage[];
-	sessionId?: string;
-	turnId?: string;
 }
 
 /** Fired when a message starts (user, assistant, or toolResult) */
 export interface MessageStartEvent {
 	type: "message_start";
 	message: AgentMessage;
-	sessionId?: string;
-	turnId?: string;
 }
 
 /** Fired during assistant message streaming with token-by-token updates */
@@ -803,16 +759,12 @@ export interface MessageUpdateEvent {
 	type: "message_update";
 	message: AgentMessage;
 	assistantMessageEvent: AssistantMessageEvent;
-	sessionId?: string;
-	turnId?: string;
 }
 
 /** Fired when a message ends */
 export interface MessageEndEvent {
 	type: "message_end";
 	message: AgentMessage;
-	sessionId?: string;
-	turnId?: string;
 }
 
 /** Fired when a tool starts executing */
@@ -855,81 +807,16 @@ export interface ModelSelectEvent {
 	source: ModelSelectSource;
 }
 
-/** Fired before model selection runs capability scoring. Extensions can override the selected model. */
-export interface BeforeModelSelectEvent {
-	type: "before_model_select";
-	unitType: string;
-	unitId: string;
-	classification: { tier: string; reason: string; downgraded: boolean };
-	taskMetadata?: Record<string, unknown>;
-	eligibleModels: string[];
-	phaseConfig?: { primary: string; fallbacks: string[] };
-}
-
-/** Result from before_model_select event handler. Return { modelId } to override selection. */
-export interface BeforeModelSelectResult {
-	modelId: string;
-}
-
-export interface AdjustToolSetRequestCustomMessage {
-	/** Index in the post-transform AgentMessage context. */
-	index: number;
-	/** Custom message type only; prompt/content text is intentionally omitted. */
-	customType: string;
-}
-
-/**
- * Fired after model selection to allow extensions to adjust the active tool set (ADR-005 Phase 4).
- * Extensions can add, remove, or reorder tools based on the selected model's provider capabilities.
- */
-export interface AdjustToolSetEvent {
-	type: "adjust_tool_set";
-	/** The selected model's API type */
-	selectedModelApi: string;
-	/** The selected model's provider */
-	selectedModelProvider: string;
-	/** The selected model ID */
-	selectedModelId: string;
-	/** Current active tool names */
-	activeToolNames: string[];
-	/** Tools already filtered by provider compatibility */
-	filteredTools: string[];
-	/**
-	 * Custom message metadata in the current request tail, measured from the
-	 * latest assistant message. This is metadata-only so extensions can scope
-	 * queued custom-message turns without seeing raw prompt content.
-	 */
-	requestCustomMessages?: AdjustToolSetRequestCustomMessage[];
-}
-
-/** Result from adjust_tool_set event handler. Return { toolNames } to override tool set. */
-export interface AdjustToolSetResult {
-	/** Replacement tool names. If omitted, the default filtering is used. */
-	toolNames?: string[];
+/** Fired when a new thinking level is selected */
+export interface ThinkingLevelSelectEvent {
+	type: "thinking_level_select";
+	level: ThinkingLevel;
+	previousLevel: ThinkingLevel;
 }
 
 // ============================================================================
 // User Bash Events
 // ============================================================================
-
-/**
- * Fired before the bash tool executes a shell command.
- * Extensions can return a transformed command string.
- * All registered handlers are called in order; each receives the output of the previous.
- */
-export interface BashTransformEvent {
-	type: "bash_transform";
-	/** The command string about to be executed */
-	command: string;
-	/** Current working directory */
-	cwd: string;
-}
-
-/** Result from bash_transform event handler */
-export interface BashTransformEventResult {
-	/** Replacement command string. If omitted or empty, the original command is used. */
-	command?: string;
-}
 
 /** Fired when user executes a bash command via ! or !! prefix */
 export interface UserBashEvent {
@@ -1015,7 +902,12 @@ export interface CustomToolCallEvent extends ToolCallEventBase {
 	input: Record<string, unknown>;
 }
 
-/** Fired before a tool executes. Can block. */
+/**
+ * Fired before a tool executes. Can block.
+ *
+ * `event.input` is mutable. Mutate it in place to patch tool arguments before execution.
+ * Later `tool_call` handlers see earlier mutations. No re-validation is performed after mutation.
+ */
 export type ToolCallEvent =
 	| BashToolCallEvent
 	| ReadToolCallEvent
@@ -1051,7 +943,7 @@ export interface EditToolResultEvent extends ToolResultEventBase {
 
 export interface WriteToolResultEvent extends ToolResultEventBase {
 	toolName: "write";
-	details: WriteToolDetails | undefined;
+	details: undefined;
 }
 
 export interface GrepToolResultEvent extends ToolResultEventBase {
@@ -1074,29 +966,6 @@ export interface CustomToolResultEvent extends ToolResultEventBase {
 	details: unknown;
 }
 
-/** Fired when tool argument validation fails before execution. Can enrich the error message. */
-export interface ToolFormatValidationErrorEvent {
-	type: "tool_format_validation_error";
-	toolName: string;
-	toolCallId: string;
-	arguments: Record<string, unknown>;
-	baseMessage: string;
-}
-
-/** A single preparation-phase failure passed to turn-level recovery handlers. */
-export interface ToolPreparationErrorFailure {
-	toolName: string;
-	arguments: Record<string, unknown>;
-	errorText: string;
-}
-
-/** Fired after a turn when one or more tools failed during preparation (schema validation). */
-export interface ToolPreparationErrorsTurnEvent {
-	type: "tool_preparation_errors_turn";
-	failures: ToolPreparationErrorFailure[];
-	preparationErrorCount: number;
-}
-
 /** Fired after a tool executes. Can modify result. */
 export type ToolResultEvent =
 	| BashToolResultEvent
@@ -1108,36 +977,27 @@ export type ToolResultEvent =
 	| LsToolResultEvent
 	| CustomToolResultEvent;
 
-/**
- * Type guard for narrowing ToolResultEvent by tool name.
- *
- * Built-in tools narrow automatically (no type params needed):
- * ```ts
- * if (isToolResultEventType("bash", event)) {
- *   event.details;  // BashToolDetails | undefined
- * }
- * ```
- *
- * Custom tools require explicit type parameters:
- * ```ts
- * if (isToolResultEventType<"my_tool", MyDetails>("my_tool", event)) {
- *   event.details;  // typed
- * }
- * ```
- */
-export function isToolResultEventType(toolName: "bash", event: ToolResultEvent): event is BashToolResultEvent;
-export function isToolResultEventType(toolName: "read", event: ToolResultEvent): event is ReadToolResultEvent;
-export function isToolResultEventType(toolName: "edit", event: ToolResultEvent): event is EditToolResultEvent;
-export function isToolResultEventType(toolName: "write", event: ToolResultEvent): event is WriteToolResultEvent;
-export function isToolResultEventType(toolName: "grep", event: ToolResultEvent): event is GrepToolResultEvent;
-export function isToolResultEventType(toolName: "find", event: ToolResultEvent): event is FindToolResultEvent;
-export function isToolResultEventType(toolName: "ls", event: ToolResultEvent): event is LsToolResultEvent;
-export function isToolResultEventType<TName extends string, TDetails = unknown>(
-	toolName: TName,
-	event: ToolResultEvent,
-): event is ToolResultEvent & { toolName: TName; details: TDetails };
-export function isToolResultEventType(toolName: string, event: ToolResultEvent): boolean {
-	return event.toolName === toolName;
+// Type guards for ToolResultEvent
+export function isBashToolResult(e: ToolResultEvent): e is BashToolResultEvent {
+	return e.toolName === "bash";
+}
+export function isReadToolResult(e: ToolResultEvent): e is ReadToolResultEvent {
+	return e.toolName === "read";
+}
+export function isEditToolResult(e: ToolResultEvent): e is EditToolResultEvent {
+	return e.toolName === "edit";
+}
+export function isWriteToolResult(e: ToolResultEvent): e is WriteToolResultEvent {
+	return e.toolName === "write";
+}
+export function isGrepToolResult(e: ToolResultEvent): e is GrepToolResultEvent {
+	return e.toolName === "grep";
+}
+export function isFindToolResult(e: ToolResultEvent): e is FindToolResultEvent {
+	return e.toolName === "find";
+}
+export function isLsToolResult(e: ToolResultEvent): e is LsToolResultEvent {
+	return e.toolName === "ls";
 }
 
 /**
@@ -1181,24 +1041,10 @@ export type ExtensionEvent =
 	| SessionEvent
 	| ContextEvent
 	| BeforeProviderRequestEvent
+	| AfterProviderResponseEvent
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
-	| StopEvent
-	| NotificationEvent
-	| BeforeCommitEvent
-	| CommitEvent
-	| BeforePushEvent
-	| PushEvent
-	| BeforePrEvent
-	| PrOpenedEvent
-	| BeforeVerifyEvent
-	| VerifyResultEvent
-	| BudgetThresholdEvent
-	| MilestoneStartEvent
-	| MilestoneEndEvent
-	| UnitStartEvent
-	| UnitEndEvent
 	| TurnStartEvent
 	| TurnEndEvent
 	| MessageStartEvent
@@ -1208,11 +1054,17 @@ export type ExtensionEvent =
 	| ToolExecutionUpdateEvent
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
-	| BashTransformEvent
+	| ThinkingLevelSelectEvent
 	| UserBashEvent
 	| InputEvent
 	| ToolCallEvent
-	| ToolResultEvent;
+	| ToolResultEvent
+	| GsdExtensionEvent
+	| BeforeModelSelectEvent
+	| AdjustToolSetEvent
+	| BashTransformEvent
+	| ToolFormatValidationErrorEvent
+	| ToolPreparationErrorsTurnEvent;
 
 // ============================================================================
 // Event Results
@@ -1225,6 +1077,7 @@ export interface ContextEventResult {
 export type BeforeProviderRequestEventResult = unknown;
 
 export interface ToolCallEventResult {
+	/** Block tool execution. To modify arguments, mutate `event.input` in place instead. */
 	block?: boolean;
 	reason?: string;
 }
@@ -1243,16 +1096,9 @@ export interface ToolResultEventResult {
 	isError?: boolean;
 }
 
-export interface ToolFormatValidationErrorEventResult {
-	/** Replaces the validation error message shown to the model. */
-	message?: string;
-}
-
-export interface ToolPreparationErrorsTurnEventResult {
-	/** Injected as a user message before the next LLM call. */
-	steeringContent?: string;
-	/** When true, resets the schema-overload consecutive failure counter. */
-	resetValidationFailureCap?: boolean;
+export interface MessageEndEventResult {
+	/** Replace the finalized message. The replacement must keep the original message role. */
+	message?: AgentMessage;
 }
 
 export interface BeforeAgentStartEventResult {
@@ -1260,16 +1106,6 @@ export interface BeforeAgentStartEventResult {
 	/** Replace the system prompt for this turn. If multiple extensions return this, they are chained. */
 	systemPrompt?: string;
 }
-
-export interface SessionDirectoryResult {
-	/** Custom session directory path. If multiple extensions return this, the last one wins. */
-	sessionDir?: string;
-}
-
-/** Special startup-only handler. Unlike other events, this receives no ExtensionContext. */
-export type SessionDirectoryHandler = (
-	event: SessionDirectoryEvent,
-) => Promise<SessionDirectoryResult | undefined> | SessionDirectoryResult | undefined;
 
 export interface SessionBeforeSwitchResult {
 	cancel?: boolean;
@@ -1319,37 +1155,15 @@ export type MessageRenderer<T = unknown> = (
 
 export interface RegisteredCommand {
 	name: string;
+	sourceInfo: SourceInfo;
 	description?: string;
-	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null;
+	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
 
-export type LifecycleHookScope = "user" | "project";
-export type LifecycleHookPhase = "beforeInstall" | "afterInstall" | "beforeRemove" | "afterRemove";
-
-export interface LifecycleHookContext {
-	/** Lifecycle phase currently being executed. */
-	phase: LifecycleHookPhase;
-	/** Package source string passed to install (npm:, git:, https://, local path). */
-	source: string;
-	/** Resolved installed package path (or resolved local path), when available for this phase. */
-	installedPath?: string;
-	/** Where the package was installed. */
-	scope: LifecycleHookScope;
-	/** Current working directory for the install invocation. */
-	cwd: string;
-	/** Whether install is running in an interactive TTY. */
-	interactive: boolean;
-	/** Info-level logging sink for install output. */
-	log(message: string): void;
-	/** Warning-level logging sink for install output. */
-	warn(message: string): void;
-	/** Error-level logging sink for install output. */
-	error(message: string): void;
+export interface ResolvedCommand extends RegisteredCommand {
+	invocationName: string;
 }
-
-export type LifecycleHookHandler = (ctx: LifecycleHookContext) => Promise<void> | void;
-export type LifecycleHookMap = Record<LifecycleHookPhase, LifecycleHookHandler[]>;
 
 // ============================================================================
 // Extension API
@@ -1368,22 +1182,18 @@ export interface ExtensionAPI {
 	// =========================================================================
 
 	on(event: "resources_discover", handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>): void;
-	on(event: "session_directory", handler: SessionDirectoryHandler): void;
 	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): void;
 	on(
 		event: "session_before_switch",
 		handler: ExtensionHandler<SessionBeforeSwitchEvent, SessionBeforeSwitchResult>,
 	): void;
-	on(event: "session_switch", handler: ExtensionHandler<SessionSwitchEvent>): void;
 	on(event: "session_before_fork", handler: ExtensionHandler<SessionBeforeForkEvent, SessionBeforeForkResult>): void;
-	on(event: "session_fork", handler: ExtensionHandler<SessionForkEvent>): void;
 	on(
 		event: "session_before_compact",
 		handler: ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>,
 	): void;
 	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): void;
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): void;
-	on(event: "session_end", handler: ExtensionHandler<SessionEndEvent>): void;
 	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
 	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;
 	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): void;
@@ -1391,9 +1201,26 @@ export interface ExtensionAPI {
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
 	): void;
+	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
+	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
+	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
+	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
+	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): void;
+	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>): void;
+	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): void;
+	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
+	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
+	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
+	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
+	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
+	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
+	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
+	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
+	on(event: "session_switch", handler: ExtensionHandler<SessionSwitchEvent>): void;
+	on(event: "session_end", handler: ExtensionHandler<SessionEndEvent>): void;
 	on(event: "stop", handler: ExtensionHandler<StopEvent>): void;
 	on(event: "notification", handler: ExtensionHandler<NotificationEvent>): void;
 	on(event: "before_commit", handler: ExtensionHandler<BeforeCommitEvent, BeforeCommitEventResult>): void;
@@ -1409,18 +1236,9 @@ export interface ExtensionAPI {
 	on(event: "milestone_end", handler: ExtensionHandler<MilestoneEndEvent>): void;
 	on(event: "unit_start", handler: ExtensionHandler<UnitStartEvent>): void;
 	on(event: "unit_end", handler: ExtensionHandler<UnitEndEvent>): void;
-	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
-	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
-	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
-	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): void;
-	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent>): void;
-	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): void;
-	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
-	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
-	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
+	on(event: "before_model_select", handler: ExtensionHandler<BeforeModelSelectEvent, BeforeModelSelectResult>): void;
+	on(event: "adjust_tool_set", handler: ExtensionHandler<AdjustToolSetEvent, AdjustToolSetResult>): void;
 	on(event: "bash_transform", handler: ExtensionHandler<BashTransformEvent, BashTransformEventResult>): void;
-	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
-	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(
 		event: "tool_format_validation_error",
 		handler: ExtensionHandler<ToolFormatValidationErrorEvent, ToolFormatValidationErrorEventResult>,
@@ -1429,58 +1247,31 @@ export interface ExtensionAPI {
 		event: "tool_preparation_errors_turn",
 		handler: ExtensionHandler<ToolPreparationErrorsTurnEvent, ToolPreparationErrorsTurnEventResult>,
 	): void;
-	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
-	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
-	on(event: "before_model_select", handler: ExtensionHandler<BeforeModelSelectEvent, BeforeModelSelectResult>): void;
-	on(event: "adjust_tool_set", handler: ExtensionHandler<AdjustToolSetEvent, AdjustToolSetResult>): void;
 
 	// =========================================================================
-	// Event Emission (for host extensions that orchestrate model selection)
+	// GSD lifecycle hooks (npm package install/remove)
 	// =========================================================================
 
-	/** Emit before_model_select event. Returns override model ID or undefined. */
-	emitBeforeModelSelect(event: Omit<BeforeModelSelectEvent, "type">): Promise<BeforeModelSelectResult | undefined>;
-
-	/** Emit adjust_tool_set event (ADR-005). Returns override tool names or undefined. */
-	emitAdjustToolSet(event: Omit<AdjustToolSetEvent, "type">): Promise<AdjustToolSetResult | undefined>;
-
-	/**
-	 * Emit a Layer 2 extension event from an extension. Supports the
-	 * post-plan additions: `notification`, `stop`, `session_end`,
-	 * `before_commit` / `commit`, `before_push` / `push`, `before_pr` /
-	 * `pr_opened`, `before_verify` / `verify_result`, `budget_threshold`,
-	 * `milestone_start` / `milestone_end`, `unit_start` / `unit_end`.
-	 *
-	 * The returned value is the aggregate handler result where meaningful
-	 * (e.g. `{ cancel: true, reason }` from `before_commit`).
-	 */
-	emitExtensionEvent(event: ExtensionEvent): Promise<unknown>;
+	registerBeforeInstall(handler: LifecycleHookHandler): void;
+	registerAfterInstall(handler: LifecycleHookHandler): void;
+	registerBeforeRemove(handler: LifecycleHookHandler): void;
+	registerAfterRemove(handler: LifecycleHookHandler): void;
 
 	// =========================================================================
 	// Tool Registration
 	// =========================================================================
 
 	/** Register a tool that the LLM can call. */
-	registerTool<TParams extends TSchema = TSchema, TDetails = unknown>(tool: ToolDefinition<TParams, TDetails>): void;
+	registerTool<TParams extends TSchema = TSchema, TDetails = unknown, TState = any>(
+		tool: ToolDefinition<TParams, TDetails, TState>,
+	): void;
 
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
 
 	/** Register a custom command. */
-	registerCommand(name: string, options: Omit<RegisteredCommand, "name">): void;
-
-	/** Register a lifecycle hook run before package installation starts. */
-	registerBeforeInstall(handler: LifecycleHookHandler): void;
-
-	/** Register a lifecycle hook run after package installation completes. */
-	registerAfterInstall(handler: LifecycleHookHandler): void;
-
-	/** Register a lifecycle hook run before package removal starts. */
-	registerBeforeRemove(handler: LifecycleHookHandler): void;
-
-	/** Register a lifecycle hook run after package removal completes. */
-	registerAfterRemove(handler: LifecycleHookHandler): void;
+	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void;
 
 	/** Register a keyboard shortcut. */
 	registerShortcut(
@@ -1530,13 +1321,6 @@ export interface ExtensionAPI {
 		options?: { deliverAs?: "steer" | "followUp" },
 	): void;
 
-	/**
-	 * Retry the last turn by removing the failed assistant response and
-	 * re-running the agent from the last user message. No-op if the last
-	 * message is not an assistant error.
-	 */
-	retryLastTurn(): void;
-
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 
@@ -1559,25 +1343,11 @@ export interface ExtensionAPI {
 	/** Get the list of currently active tool names. */
 	getActiveTools(): string[];
 
-	/** Get all configured tools with name and description. */
+	/** Get all configured tools with parameter schema and source metadata. */
 	getAllTools(): ToolInfo[];
 
 	/** Set the active tools by name. */
 	setActiveTools(toolNames: string[]): void;
-
-	/**
-	 * Get the prompt-only skill catalog filter, if one is active.
-	 * Undefined means all loaded skills remain visible in <available_skills>.
-	 */
-	getVisibleSkills(): string[] | undefined;
-
-	/**
-	 * Set or clear the prompt-only skill catalog filter.
-	 *
-	 * This changes which loaded skills are advertised in <available_skills>;
-	 * it does not unload skills or disable the Skill tool.
-	 */
-	setVisibleSkills(skillNames: string[] | undefined): void;
 
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
@@ -1594,6 +1364,13 @@ export interface ExtensionAPI {
 
 	/** Set thinking level (clamped to model capabilities). */
 	setThinkingLevel(level: ThinkingLevel): void;
+
+	retryLastTurn(): void;
+	getVisibleSkills(): string[] | undefined;
+	setVisibleSkills(skillNames: string[] | undefined): void;
+	emitBeforeModelSelect(event: Omit<BeforeModelSelectEvent, "type">): Promise<BeforeModelSelectResult | undefined>;
+	emitAdjustToolSet(event: Omit<AdjustToolSetEvent, "type">): Promise<AdjustToolSetResult | undefined>;
+	emitExtensionEvent(event: ExtensionEvent): Promise<unknown>;
 
 	// =========================================================================
 	// Provider Registration
@@ -1678,11 +1455,8 @@ export interface ExtensionAPI {
 
 /** Configuration for registering a provider via pi.registerProvider(). */
 export interface ProviderConfig {
-	/** Auth behavior for provider availability and request key handling. Defaults to "apiKey". */
-	authMode?: "apiKey" | "oauth" | "externalCli" | "none";
-	/** Optional readiness check. Return false if the provider cannot accept requests (e.g., CLI not authenticated, API key invalid).
-	 * Called before default auth checks. Trusted at the same level as extension code — extensions already have arbitrary code execution. */
-	isReady?: () => boolean;
+	/** Display name for the provider in UI. */
+	name?: string;
 	/** Base URL for the API endpoint. Required when defining models. */
 	baseUrl?: string;
 	/** API key or environment variable name. Required when defining models (unless oauth provided). */
@@ -1695,6 +1469,10 @@ export interface ProviderConfig {
 	headers?: Record<string, string>;
 	/** If true, adds Authorization: Bearer header with the resolved API key. */
 	authHeader?: boolean;
+	/** How this provider authenticates requests (overrides auto-detection). */
+	authMode?: "apiKey" | "oauth" | "externalCli" | "none";
+	/** Optional readiness check before accepting requests. */
+	isReady?: () => boolean;
 	/** Models to register. If provided, replaces all existing models for this provider. */
 	models?: ProviderModelConfig[];
 	/** OAuth provider for /login support. The `id` is set automatically from the provider name. */
@@ -1720,8 +1498,12 @@ export interface ProviderModelConfig {
 	name: string;
 	/** API type override for this model. */
 	api?: Api;
+	/** API endpoint URL override for this model. */
+	baseUrl?: string;
 	/** Whether the model supports extended thinking. */
 	reasoning: boolean;
+	/** Maps pi thinking levels to provider/model-specific values; null marks a level unsupported. */
+	thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
 	/** Supported input types. */
 	input: ("text" | "image")[];
 	/** Cost per token (for tracking, can be 0). */
@@ -1734,8 +1516,6 @@ export interface ProviderModelConfig {
 	headers?: Record<string, string>;
 	/** OpenAI compatibility settings. */
 	compat?: Model<Api>["compat"];
-	/** Opaque provider-specific options (e.g. Ollama keep_alive, num_gpu). */
-	providerOptions?: Record<string, unknown>;
 }
 
 /** Extension factory function type. Supports both sync and async initialization. */
@@ -1747,7 +1527,7 @@ export type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
 
 export interface RegisteredTool {
 	definition: ToolDefinition;
-	extensionPath: string;
+	sourceInfo: SourceInfo;
 }
 
 export interface ExtensionFlag {
@@ -1767,8 +1547,44 @@ export interface ExtensionShortcut {
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
-/** Tool info with name, description, and parameter schema */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters">;
+export type SendMessageHandler = <T = unknown>(
+	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+) => void;
+
+export type SendUserMessageHandler = (
+	content: string | (TextContent | ImageContent)[],
+	options?: { deliverAs?: "steer" | "followUp" },
+) => void;
+
+export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
+
+export type SetSessionNameHandler = (name: string) => void;
+
+export type GetSessionNameHandler = () => string | undefined;
+
+export type GetActiveToolsHandler = () => string[];
+
+/** Tool info with name, description, parameter schema, and source metadata */
+export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters"> & {
+	sourceInfo: SourceInfo;
+};
+
+export type GetAllToolsHandler = () => ToolInfo[];
+
+export type GetCommandsHandler = () => SlashCommandInfo[];
+
+export type SetActiveToolsHandler = (toolNames: string[]) => void;
+
+export type RefreshToolsHandler = () => void;
+
+export type SetModelHandler = (model: Model<any>, options?: { persist?: boolean }) => Promise<boolean>;
+
+export type GetThinkingLevelHandler = () => ThinkingLevel;
+
+export type SetThinkingLevelHandler = (level: ThinkingLevel) => void;
+
+export type SetLabelHandler = (entryId: string, label: string | undefined) => void;
 
 /**
  * Shared state created by loader, used during registration and runtime.
@@ -1777,26 +1593,19 @@ export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
 	/** Provider registrations queued during extension loading, processed when runner binds */
-	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig }>;
+	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig; extensionPath: string }>;
+	/** Throws when this extension instance is stale after runtime replacement. */
+	assertActive: () => void;
+	/** Marks this extension instance as stale after runtime replacement or reload. */
+	invalidate: (message?: string) => void;
 	/**
 	 * Register or unregister a provider.
 	 *
 	 * Before bindCore(): queues registrations / removes from queue.
 	 * After bindCore(): calls ModelRegistry directly for immediate effect.
 	 */
-	registerProvider: (name: string, config: ProviderConfig) => void;
-	unregisterProvider: (name: string) => void;
-	/** Emit before_model_select event to all registered handlers. Bound by ExtensionRunner. */
-	emitBeforeModelSelect: (event: Omit<BeforeModelSelectEvent, "type">) => Promise<BeforeModelSelectResult | undefined>;
-	/** Emit adjust_tool_set event to all registered handlers. Bound by ExtensionRunner (ADR-005). */
-	emitAdjustToolSet: (event: Omit<AdjustToolSetEvent, "type">) => Promise<AdjustToolSetResult | undefined>;
-	/**
-	 * Emit a Layer 2 extension event from an extension. Supports the
-	 * post-plan additions (notification, stop, git lifecycle, verify,
-	 * budget, milestone, unit, session_end). Returns the handler chain's
-	 * aggregate result for events that support vetoes / mutations.
-	 */
-	emitExtensionEvent: (event: ExtensionEvent) => Promise<unknown>;
+	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
+	unregisterProvider: (name: string, extensionPath?: string) => void;
 }
 
 /**
@@ -1804,29 +1613,28 @@ export interface ExtensionRuntimeState {
  * Provided to runner.initialize(), copied into the shared runtime.
  */
 export interface ExtensionActions {
-	sendMessage: <T = unknown>(
-		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
-	) => void;
-	sendUserMessage: (
-		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
-	) => void;
+	sendMessage: SendMessageHandler;
+	sendUserMessage: SendUserMessageHandler;
+	appendEntry: AppendEntryHandler;
+	setSessionName: SetSessionNameHandler;
+	getSessionName: GetSessionNameHandler;
+	setLabel: SetLabelHandler;
+	getActiveTools: GetActiveToolsHandler;
+	getAllTools: GetAllToolsHandler;
+	setActiveTools: SetActiveToolsHandler;
+	refreshTools: RefreshToolsHandler;
+	getCommands: GetCommandsHandler;
+	setModel: SetModelHandler;
+	getThinkingLevel: GetThinkingLevelHandler;
+	setThinkingLevel: SetThinkingLevelHandler;
 	retryLastTurn: () => void;
-	appendEntry: <T = unknown>(customType: string, data?: T) => void;
-	setSessionName: (name: string) => void;
-	getSessionName: () => string | undefined;
-	setLabel: (entryId: string, label: string | undefined) => void;
-	getActiveTools: () => string[];
-	getAllTools: () => ToolInfo[];
-	setActiveTools: (toolNames: string[]) => void;
 	getVisibleSkills: () => string[] | undefined;
 	setVisibleSkills: (skillNames: string[] | undefined) => void;
-	refreshTools: () => void;
-	getCommands: () => SlashCommandInfo[];
-	setModel: (model: Model<any>, options?: { persist?: boolean }) => Promise<boolean>;
-	getThinkingLevel: () => ThinkingLevel;
-	setThinkingLevel: (level: ThinkingLevel) => void;
+	emitBeforeModelSelect: (
+		event: Omit<BeforeModelSelectEvent, "type">,
+	) => Promise<BeforeModelSelectResult | undefined>;
+	emitAdjustToolSet: (event: Omit<AdjustToolSetEvent, "type">) => Promise<AdjustToolSetResult | undefined>;
+	emitExtensionEvent: (event: ExtensionEvent) => Promise<unknown>;
 }
 
 /**
@@ -1836,13 +1644,14 @@ export interface ExtensionActions {
 export interface ExtensionContextActions {
 	getModel: () => Model<any> | undefined;
 	isIdle: () => boolean;
+	getSignal: () => AbortSignal | undefined;
 	abort: () => void;
 	hasPendingMessages: () => boolean;
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
-	setCompactionThresholdOverride: (percent: number | undefined) => void;
+	setCompactionThresholdOverride?: (percent?: number) => void;
 }
 
 /**
@@ -1853,18 +1662,23 @@ export interface ExtensionCommandContextActions {
 	waitForIdle: () => Promise<void>;
 	newSession: (options?: {
 		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
-		/** See ExtensionCommandContext.newSession for docs. */
 		workspaceRoot?: string;
-		/** See ExtensionCommandContext.newSession for docs (#3731). */
 		abortSignal?: AbortSignal;
+		setup?: (sessionManager: SessionManager) => Promise<void>;
+		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
 	}) => Promise<{ cancelled: boolean }>;
-	fork: (entryId: string) => Promise<{ cancelled: boolean }>;
+	fork: (
+		entryId: string,
+		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
+	) => Promise<{ cancelled: boolean }>;
 	navigateTree: (
 		targetId: string,
 		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 	) => Promise<{ cancelled: boolean }>;
-	switchSession: (sessionPath: string) => Promise<{ cancelled: boolean }>;
+	switchSession: (
+		sessionPath: string,
+		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
+	) => Promise<{ cancelled: boolean }>;
 	reload: () => Promise<void>;
 }
 
@@ -1874,31 +1688,44 @@ export interface ExtensionCommandContextActions {
  */
 export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
 
+export type LifecycleHookScope = "user" | "project";
+export type LifecycleHookPhase = "beforeInstall" | "afterInstall" | "beforeRemove" | "afterRemove";
+
+export interface LifecycleHookContext {
+	phase: LifecycleHookPhase;
+	source: string;
+	installedPath?: string;
+	scope: LifecycleHookScope;
+	cwd: string;
+	interactive: boolean;
+	log(message: string): void;
+	warn(message: string): void;
+	error(message: string): void;
+}
+
+export type LifecycleHookHandler = (ctx: LifecycleHookContext) => Promise<void> | void;
+export type LifecycleHookMap = Record<LifecycleHookPhase, LifecycleHookHandler[]>;
+
 /** Loaded extension with all registered items. */
 export interface Extension {
 	path: string;
 	resolvedPath: string;
+	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
-	lifecycleHooks: LifecycleHookMap;
-}
-
-/** Warning from extension dependency sort (missing deps, cycles). */
-export interface ExtensionLoadWarning {
-	declaringId: string;
-	missingId: string;
-	message: string;
+	/** GSD: npm package lifecycle hooks registered by extensions. */
+	lifecycleHooks?: LifecycleHookMap;
 }
 
 /** Result of loading extensions. */
 export interface LoadExtensionsResult {
 	extensions: Extension[];
 	errors: Array<{ path: string; error: string }>;
-	warnings: ExtensionLoadWarning[];
+	warnings?: Array<{ path: string; message: string }>;
 	/** Shared runtime - actions are throwing stubs until runner.initialize() */
 	runtime: ExtensionRuntime;
 }

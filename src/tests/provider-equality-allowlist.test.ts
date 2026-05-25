@@ -62,11 +62,11 @@ const ALLOWED_FILES: Record<string, string> = {
     "transport-specific fallback source (ADR-012)",
 
   // Claude-Code-specific SDK hooks (OAuth prep, streaming buffer sizing).
-  "packages/pi-coding-agent/src/core/sdk.ts":
+  "packages/gsd-agent-core/src/sdk.ts":
     "claude-code-specific SDK behavior",
-  "packages/pi-coding-agent/src/modes/interactive/controllers/chat-controller.ts":
+  "packages/gsd-agent-modes/src/modes/interactive/controllers/chat-controller.ts":
     "claude-code-specific streaming UI",
-  "packages/pi-coding-agent/src/modes/interactive/components/assistant-message.ts":
+  "packages/gsd-agent-modes/src/modes/interactive/components/assistant-message.ts":
     "claude-code-specific message rendering",
 
   // GitHub Copilot transport-specific request/auth transforms.

@@ -245,5 +245,9 @@ if (missingPackages.length > 0) {
   process.exit(1)
 }
 
+// Register GSD agent packages for extension imports before CLI loads.
+const { registerAgentBundles } = await import('./register-agent-bundles.js')
+registerAgentBundles()
+
 // Dynamic import defers ESM evaluation — config.js will see PI_PACKAGE_DIR above
 await import('./cli.js')

@@ -159,7 +159,15 @@ export async function prepareLifecycleHooks(
 
 	const hooksByPath = new Map<string, LifecycleHookMap>();
 	for (const extension of loaded.extensions) {
-		hooksByPath.set(extension.path, extension.lifecycleHooks);
+		hooksByPath.set(
+			extension.path,
+			(extension as { lifecycleHooks?: LifecycleHookMap }).lifecycleHooks ?? {
+				beforeInstall: [],
+				afterInstall: [],
+				beforeRemove: [],
+				afterRemove: [],
+			},
+		);
 	}
 
 	return {
@@ -203,9 +211,14 @@ async function runLegacyExportHook(
 	try {
 		let module = _legacyModuleCache.get(entryPath);
 		if (!module) {
-			module = await importExtensionModule<Record<string, unknown>>(import.meta.url, pathToFileURL(entryPath).href);
-			_legacyModuleCache.set(entryPath, module);
+			const loaded = await importExtensionModule<Record<string, unknown>>(
+				import.meta.url,
+				pathToFileURL(entryPath).href,
+			);
+			module = loaded;
+			_legacyModuleCache.set(entryPath, loaded);
 		}
+		if (!module) return null;
 		for (const exportName of getLegacyExportCandidates(phase)) {
 			const candidate = module[exportName];
 			if (typeof candidate === "function") {

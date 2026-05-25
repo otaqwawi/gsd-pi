@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/earendil-works/pi",
+  "npmScope": "@earendil-works",
+  "pinnedRef": "v0.75.5",
+  "pinnedCommit": null,
+  "packageMap": {
+    "packages/agent": "packages/pi-agent-core",
+    "packages/ai": "packages/pi-ai",
+    "packages/tui": "packages/pi-tui",
+    "packages/coding-agent": "packages/pi-coding-agent"
+  },
+  "gsdPackageNames": {
+    "packages/agent": "@gsd/pi-agent-core",
+    "packages/ai": "@gsd/pi-ai",
+    "packages/tui": "@gsd/pi-tui",
+    "packages/coding-agent": "@gsd/pi-coding-agent"
+  },
+  "protectedPaths": [
+    "packages/gsd-agent-core",
+    "packages/gsd-agent-modes"
+  ],
+  "legacyScopes": ["@mariozechner"],
+  "notes": "Run scripts/vendor-pi.cjs to sync vendored pi-* packages from earendil-works/pi. Complete ADR-010 clean seam before vendoring."
+}

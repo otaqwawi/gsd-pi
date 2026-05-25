@@ -1,13 +1,19 @@
 /**
- * Shared utilities for Google Generative AI and Google Cloud Code Assist providers.
+ * Shared utilities for Google Generative AI and Google Vertex providers.
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
 import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { transformMessagesWithReport } from "./transform-messages.js";
+import { transformMessages } from "./transform-messages.js";
 
 type GoogleApiType = "google-generative-ai" | "google-gemini-cli" | "google-vertex";
+
+/**
+ * Thinking level for Gemini 3 models.
+ * Mirrors Google's ThinkingLevel enum values.
+ */
+export type GoogleThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
 
 /**
  * Determines whether a streamed Gemini `Part` should be treated as "thinking".
@@ -45,11 +51,6 @@ export function retainThoughtSignature(existing: string | undefined, incoming: s
 // Thought signatures must be base64 for Google APIs (TYPE_BYTES).
 const base64SignaturePattern = /^[A-Za-z0-9+/]+={0,2}$/;
 
-// Sentinel value that tells the Gemini API to skip thought signature validation.
-// Used for unsigned function call parts (e.g. replayed from providers without thought signatures).
-// See: https://ai.google.dev/gemini-api/docs/thought-signatures
-const SKIP_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
-
 function isValidThoughtSignature(signature: string | undefined): boolean {
 	if (!signature) return false;
 	if (signature.length % 4 !== 0) return false;
@@ -66,8 +67,22 @@ function resolveThoughtSignature(isSameProviderAndModel: boolean, signature: str
 /**
  * Models via Google APIs that require explicit tool call IDs in function calls/responses.
  */
-function requiresToolCallId(modelId: string): boolean {
+export function requiresToolCallId(modelId: string): boolean {
 	return modelId.startsWith("claude-") || modelId.startsWith("gpt-oss-");
+}
+
+function getGeminiMajorVersion(modelId: string): number | undefined {
+	const match = modelId.toLowerCase().match(/^gemini(?:-live)?-(\d+)/);
+	if (!match) return undefined;
+	return Number.parseInt(match[1], 10);
+}
+
+function supportsMultimodalFunctionResponse(modelId: string): boolean {
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	if (geminiMajorVersion !== undefined) {
+		return geminiMajorVersion >= 3;
+	}
+	return true;
 }
 
 /**
@@ -80,7 +95,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 		return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 	};
 
-	const transformedMessages = transformMessagesWithReport(context.messages, model, normalizeToolCallId, "google-generative-ai");
+	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 
 	for (const msg of transformedMessages) {
 		if (msg.role === "user") {
@@ -102,11 +117,10 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 						};
 					}
 				});
-				const filteredParts = !model.input.includes("image") ? parts.filter((p) => p.text !== undefined) : parts;
-				if (filteredParts.length === 0) continue;
+				if (parts.length === 0) continue;
 				contents.push({
 					role: "user",
-					parts: filteredParts,
+					parts,
 				});
 			}
 		} else if (msg.role === "assistant") {
@@ -116,7 +130,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
-					// Skip empty text blocks - they can cause issues with some models (e.g. Claude via Antigravity)
+					// Skip empty text blocks
 					if (!block.text || block.text.trim() === "") continue;
 					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.textSignature);
 					parts.push({
@@ -142,18 +156,13 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 					}
 				} else if (block.type === "toolCall") {
 					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature);
-					// Gemini 3 requires thoughtSignature on all function calls when thinking mode is enabled.
-					// Use the skip_thought_signature_validator sentinel for unsigned function calls
-					// (e.g. replayed from providers without thought signatures like Claude via Antigravity).
-					const isGemini3 = model.id.toLowerCase().includes("gemini-3");
-					const effectiveSignature = thoughtSignature || (isGemini3 ? SKIP_THOUGHT_SIGNATURE : undefined);
 					const part: Part = {
 						functionCall: {
 							name: block.name,
 							args: block.arguments ?? {},
 							...(requiresToolCallId(model.id) ? { id: block.id } : {}),
 						},
-						...(effectiveSignature && { thoughtSignature: effectiveSignature }),
+						...(thoughtSignature && { thoughtSignature }),
 					};
 					parts.push(part);
 				}
@@ -175,10 +184,10 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			const hasText = textResult.length > 0;
 			const hasImages = imageContent.length > 0;
 
-			// Gemini 3 supports multimodal function responses with images nested inside functionResponse.parts
-			// See: https://ai.google.dev/gemini-api/docs/function-calling#multimodal
-			// Older models don't support this, so we put images in a separate user message.
-			const supportsMultimodalFunctionResponse = model.id.includes("gemini-3");
+			// Gemini 3+ models support multimodal function responses with images nested inside
+			// functionResponse.parts. Claude and other non-Gemini models behind Cloud Code Assist /
+			// Gemini < 3 still needs a separate user image turn.
+			const modelSupportsMultimodalFunctionResponse = supportsMultimodalFunctionResponse(model.id);
 
 			// Use "output" key for success, "error" key for errors as per SDK documentation
 			const responseValue = hasText ? sanitizeSurrogates(textResult) : hasImages ? "(see attached image)" : "";
@@ -195,8 +204,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				functionResponse: {
 					name: msg.toolName,
 					response: msg.isError ? { error: responseValue } : { output: responseValue },
-					// Nest images inside functionResponse.parts for Gemini 3
-					...(hasImages && supportsMultimodalFunctionResponse && { parts: imageParts }),
+					...(hasImages && modelSupportsMultimodalFunctionResponse && { parts: imageParts }),
 					...(includeId ? { id: msg.toolCallId } : {}),
 				},
 			};
@@ -213,8 +221,8 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				});
 			}
 
-			// For older models, add images in a separate user message
-			if (hasImages && !supportsMultimodalFunctionResponse) {
+			// For Gemini < 3, add images in a separate user message
+			if (hasImages && !modelSupportsMultimodalFunctionResponse) {
 				contents.push({
 					role: "user",
 					parts: [{ text: "Tool result image:" }, ...imageParts],
@@ -226,186 +234,31 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	return contents;
 }
 
+const JSON_SCHEMA_META_DECLARATIONS = new Set([
+	"$schema",
+	"$id",
+	"$anchor",
+	"$dynamicAnchor",
+	"$vocabulary",
+	"$comment",
+	"$defs",
+	"definitions", // pre-draft-2019-09 equivalent of $defs
+]);
+
 /**
- * Sanitize a JSON Schema for Google's function declarations API.
- * Google's API rejects `patternProperties` and `const` fields which are valid in JSON Schema.
- *
- * This function recursively:
- * - Removes all `patternProperties` fields
- * - Converts `const: value` to `enum: [value]` in anyOf/oneOf blocks
- *
- * This is needed for providers like `google-antigravity` when proxying Claude models,
- * since Google Cloud Code Assist uses a restricted subset of JSON Schema.
+ * Strip meta-declarations from a schema obj
  */
-export function sanitizeSchemaForGoogle(schema: unknown): unknown {
-	if (!schema || typeof schema !== "object") {
+function sanitizeForOpenApi(schema: unknown): unknown {
+	if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
 		return schema;
 	}
 
-	if (Array.isArray(schema)) {
-		return schema.map((item) => sanitizeSchemaForGoogle(item));
+	const result: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(schema)) {
+		if (JSON_SCHEMA_META_DECLARATIONS.has(key)) continue;
+		result[key] = sanitizeForOpenApi(value);
 	}
-
-	const obj = schema as Record<string, unknown>;
-	const sanitized: Record<string, unknown> = {};
-
-	for (const [key, value] of Object.entries(obj)) {
-		// Skip keywords not supported by Google's function declaration subset.
-		if (key === "patternProperties" || key === "$schema" || key === "$id" || key === "unevaluatedProperties") {
-			continue;
-		}
-
-		if (key === "additionalProperties" && value === false) {
-			continue;
-		}
-
-		if (key === "required" && Array.isArray(value) && value.length === 0) {
-			continue;
-		}
-
-		// Convert const to enum — Google's API rejects the const keyword
-		if (key === "const") {
-			sanitized.enum = [value];
-			const inferredType = inferJsonSchemaType(value);
-			if (inferredType) {
-				sanitized.type = inferredType;
-			}
-			continue;
-		}
-
-		// Recursively sanitize all nested objects and arrays
-		if (typeof value === "object") {
-			sanitized[key] = sanitizeSchemaForGoogle(value);
-		} else {
-			sanitized[key] = value;
-		}
-	}
-
-	return sanitized;
-}
-
-function inferJsonSchemaType(value: unknown): string | undefined {
-	if (typeof value === "string") return "string";
-	if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
-	if (typeof value === "boolean") return "boolean";
-	return undefined;
-}
-
-function mergePropertySchemas(a: unknown, b: unknown): unknown {
-	if (!a) return b;
-	if (!b) return a;
-	if (
-		typeof a !== "object"
-		|| typeof b !== "object"
-		|| Array.isArray(a)
-		|| Array.isArray(b)
-	) {
-		return b;
-	}
-
-	const left = a as Record<string, unknown>;
-	const right = b as Record<string, unknown>;
-	const leftConst = left.const;
-	const rightConst = right.const;
-	if (leftConst !== undefined && rightConst !== undefined) {
-		const enumValues = Array.from(new Set([leftConst, rightConst]));
-		const { const: _leftConst, ...leftWithoutConst } = left;
-		const { const: _rightConst, ...rightWithoutConst } = right;
-		return {
-			...leftWithoutConst,
-			...rightWithoutConst,
-			enum: enumValues,
-			type: enumValues.every((value) => typeof value === "string") ? "string" : right.type ?? left.type,
-		};
-	}
-
-	if (Array.isArray(left.enum) || Array.isArray(right.enum)) {
-		const enumValues = Array.from(new Set([...(Array.isArray(left.enum) ? left.enum : []), ...(Array.isArray(right.enum) ? right.enum : [])]));
-		return {
-			...left,
-			...right,
-			enum: enumValues,
-		};
-	}
-
-	return { ...left, ...right };
-}
-
-/**
- * Cloud Code Assist translates Claude-model function declarations into
- * Anthropic custom tool schemas. Keep that route on a conservative object-root
- * schema, matching the Anthropic provider's conversion for top-level unions.
- */
-export function normalizeClaudeToolSchemaForGoogle(schema: unknown): unknown {
-	if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
-		return {
-			type: "object",
-			properties: {},
-			required: [],
-		};
-	}
-
-	const jsonSchema = schema as Record<string, unknown>;
-	const variants = Array.isArray(jsonSchema.anyOf)
-		? jsonSchema.anyOf
-		: Array.isArray(jsonSchema.oneOf)
-			? jsonSchema.oneOf
-			: [];
-	const objectVariants = variants.filter(
-		(candidate): candidate is Record<string, unknown> =>
-			!!candidate
-			&& typeof candidate === "object"
-			&& !Array.isArray(candidate)
-			&& candidate.type === "object"
-			&& typeof candidate.properties === "object"
-			&& candidate.properties !== null
-			&& !Array.isArray(candidate.properties),
-	);
-
-	if (objectVariants.length === 0) {
-		return {
-			...jsonSchema,
-			type: "object",
-			properties:
-				typeof jsonSchema.properties === "object" && jsonSchema.properties !== null && !Array.isArray(jsonSchema.properties)
-					? jsonSchema.properties
-					: {},
-			required: Array.isArray(jsonSchema.required)
-				? jsonSchema.required.filter((key): key is string => typeof key === "string")
-				: [],
-		};
-	}
-
-	const properties = objectVariants.reduce(
-		(acc: Record<string, unknown>, candidate) => ({
-			...acc,
-			...Object.fromEntries(
-				Object.entries(candidate.properties as Record<string, unknown>).map(([key, value]) => [
-					key,
-					mergePropertySchemas(acc[key], value),
-				]),
-			),
-		}),
-		{},
-	);
-	const required = Array.from(
-		new Set(
-			objectVariants.flatMap((candidate) =>
-				Array.isArray(candidate.required)
-					? candidate.required.filter((key): key is string => typeof key === "string")
-					: [],
-			),
-		),
-	);
-
-	const normalized: Record<string, unknown> = {
-		type: "object",
-		properties,
-	};
-	if (required.length > 0) {
-		normalized.required = required;
-	}
-	return normalized;
+	return result;
 }
 
 /**
@@ -415,9 +268,6 @@ export function normalizeClaudeToolSchemaForGoogle(schema: unknown): unknown {
  * anyOf, oneOf, const, etc.). Set `useParameters` to true to use the legacy `parameters`
  * field instead (OpenAPI 3.03 Schema). This is needed for Cloud Code Assist with Claude
  * models, where the API translates `parameters` into Anthropic's `input_schema`.
- *
- * The schema is automatically sanitized to remove fields not supported by Google's
- * function declarations API (patternProperties, const converted to enum, etc.).
  */
 export function convertTools(
 	tools: Tool[],
@@ -430,8 +280,8 @@ export function convertTools(
 				name: tool.name,
 				description: tool.description,
 				...(useParameters
-					? { parameters: sanitizeSchemaForGoogle(normalizeClaudeToolSchemaForGoogle(tool.parameters)) }
-					: { parametersJsonSchema: sanitizeSchemaForGoogle(tool.parameters) }),
+					? { parameters: sanitizeForOpenApi(tool.parameters as unknown) }
+					: { parametersJsonSchema: tool.parameters }),
 			})),
 		},
 	];

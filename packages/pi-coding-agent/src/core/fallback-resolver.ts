@@ -10,7 +10,7 @@
  */
 
 import type { Api, Model } from "@gsd/pi-ai";
-import type { AuthStorage, UsageLimitErrorType } from "./auth-storage.js";
+import type { AuthStorage } from "./auth-storage.js";
 import type { ModelRegistry } from "./model-registry.js";
 import type { FallbackChainEntry, SettingsManager } from "./settings-manager.js";
 
@@ -36,7 +36,7 @@ export class FallbackResolver {
 	 */
 	async findFallback(
 		currentModel: Model<Api>,
-		errorType: UsageLimitErrorType,
+		errorType: string,
 	): Promise<FallbackResult | null> {
 		const { enabled, chains } = this.settingsManager.getFallbackSettings();
 		if (!enabled) return null;
