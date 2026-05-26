@@ -227,6 +227,9 @@ jobs:
 
       - uses: ./.github/actions/restore-ci-build-artifacts
 
+      - name: Install web host dependencies
+        run: npm --prefix web ci
+
       - name: Generate merged coverage report (report-only)
         run: npm run test:coverage:full
 
