@@ -30,11 +30,13 @@ import type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 import type { GateRow } from "./types.js";
 import {
   resolveMilestoneFile,
+  resolveDir,
   resolveFile,
   resolveSliceFile,
   resolveSlicePath,
   gsdProjectionRoot,
   gsdRoot,
+  buildMilestoneFileName,
   buildTaskFileName,
   buildSliceFileName,
 } from "./paths.js";
@@ -439,9 +441,12 @@ export async function renderRoadmapFromDb(
   }
 
   const slices = getMilestoneSlices(milestoneId);
-  const milestoneDir = join(gsdProjectionRoot(basePath), "milestones", milestoneId);
-  const absPath = resolveFile(milestoneDir, milestoneId, "ROADMAP") ??
-    join(milestoneDir, `${milestoneId}-ROADMAP.md`);
+  const projectionMilestonesDir = join(gsdProjectionRoot(basePath), "milestones");
+  const milestoneDirName = resolveDir(projectionMilestonesDir, milestoneId) ?? milestoneId;
+  const milestoneDir = join(projectionMilestonesDir, milestoneDirName);
+  const roadmapFileName = resolveFile(milestoneDir, milestoneId, "ROADMAP") ??
+    buildMilestoneFileName(milestoneId, "ROADMAP");
+  const absPath = join(milestoneDir, roadmapFileName);
   const artifactPath = toArtifactPath(absPath, basePath);
   const content = renderRoadmapMarkdown(milestone, slices);
 
