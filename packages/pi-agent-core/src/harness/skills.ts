@@ -350,26 +350,43 @@ async function resolveKind(
 }
 
 function joinEnvPath(base: string, child: string): string {
-	return `${base.replace(/\/+$/, "")}/${child.replace(/^\/+/, "")}`;
+	let baseEnd = base.length;
+	while (baseEnd > 0 && base[baseEnd - 1] === "/") baseEnd--;
+	let childStart = 0;
+	while (childStart < child.length && child[childStart] === "/") childStart++;
+	const trimmedBase = baseEnd === base.length ? base : base.slice(0, baseEnd);
+	const trimmedChild = childStart === 0 ? child : child.slice(childStart);
+	return `${trimmedBase}/${trimmedChild}`;
 }
 
 function dirnameEnvPath(path: string): string {
-	const normalized = path.replace(/\/+$/, "");
+	let end = path.length;
+	while (end > 0 && path[end - 1] === "/") end--;
+	const normalized = end === path.length ? path : path.slice(0, end);
 	const slashIndex = normalized.lastIndexOf("/");
 	return slashIndex <= 0 ? "/" : normalized.slice(0, slashIndex);
 }
 
 function basenameEnvPath(path: string): string {
-	const normalized = path.replace(/\/+$/, "");
+	let end = path.length;
+	while (end > 0 && path[end - 1] === "/") end--;
+	const normalized = end === path.length ? path : path.slice(0, end);
 	const slashIndex = normalized.lastIndexOf("/");
 	return slashIndex === -1 ? normalized : normalized.slice(slashIndex + 1);
 }
 
 function relativeEnvPath(root: string, path: string): string {
-	const normalizedRoot = root.replace(/\/+$/, "");
-	const normalizedPath = path.replace(/\/+$/, "");
+	let rootEnd = root.length;
+	while (rootEnd > 0 && root[rootEnd - 1] === "/") rootEnd--;
+	let pathEnd = path.length;
+	while (pathEnd > 0 && path[pathEnd - 1] === "/") pathEnd--;
+	const normalizedRoot = rootEnd === root.length ? root : root.slice(0, rootEnd);
+	const normalizedPath = pathEnd === path.length ? path : path.slice(0, pathEnd);
 	if (normalizedPath === normalizedRoot) return "";
-	return normalizedPath.startsWith(`${normalizedRoot}/`)
-		? normalizedPath.slice(normalizedRoot.length + 1)
-		: normalizedPath.replace(/^\/+/, "");
+	if (normalizedPath.startsWith(`${normalizedRoot}/`)) {
+		return normalizedPath.slice(normalizedRoot.length + 1);
+	}
+	let start = 0;
+	while (start < normalizedPath.length && normalizedPath[start] === "/") start++;
+	return start === 0 ? normalizedPath : normalizedPath.slice(start);
 }

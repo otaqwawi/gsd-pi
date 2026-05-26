@@ -261,6 +261,35 @@ function hasGlobPattern(s: string): boolean {
 	return s.includes("*") || s.includes("?");
 }
 
+function assertSafeGitArg(value: string, label: string): string {
+	if (!value) {
+		throw new Error(`Missing git ${label}`);
+	}
+	if (value.startsWith("-")) {
+		throw new Error(`Unsafe git ${label}: ${value}`);
+	}
+	if (/[\0\r\n]/u.test(value)) {
+		throw new Error(`Invalid git ${label}: ${value}`);
+	}
+	return value;
+}
+
+function assertSafeGitRepo(repo: string): string {
+	const safeRepo = assertSafeGitArg(repo, "repository");
+	if (/[\s]/u.test(safeRepo)) {
+		throw new Error(`Invalid git repository: ${repo}`);
+	}
+	return safeRepo;
+}
+
+function assertSafeGitRef(ref: string): string {
+	const safeRef = assertSafeGitArg(ref, "ref");
+	if (!/^[A-Za-z0-9._/@+-]+$/u.test(safeRef)) {
+		throw new Error(`Invalid git ref: ${ref}`);
+	}
+	return safeRef;
+}
+
 function splitPatterns(entries: string[]): { plain: string[]; patterns: string[] } {
 	const plain: string[] = [];
 	const patterns: string[] = [];
@@ -1740,7 +1769,8 @@ export class DefaultPackageManager implements PackageManager {
 		const targetDir = this.getGitInstallPath(source, scope);
 		if (existsSync(targetDir)) {
 			if (source.ref) {
-				await this.ensureGitRef(targetDir, ["fetch", "origin", source.ref], "FETCH_HEAD");
+				const safeRef = assertSafeGitRef(source.ref);
+				await this.ensureGitRef(targetDir, ["fetch", "origin", safeRef], "FETCH_HEAD");
 				return;
 			}
 			const target = await this.getLocalGitUpdateTarget(targetDir);
@@ -1753,9 +1783,9 @@ export class DefaultPackageManager implements PackageManager {
 		}
 		mkdirSync(dirname(targetDir), { recursive: true });
 
-		await this.runCommand("git", ["clone", source.repo, targetDir]);
+		await this.runCommand("git", ["clone", assertSafeGitRepo(source.repo), targetDir]);
 		if (source.ref) {
-			await this.runCommand("git", ["checkout", source.ref], { cwd: targetDir });
+			await this.runCommand("git", ["checkout", assertSafeGitRef(source.ref)], { cwd: targetDir });
 		}
 		const packageJsonPath = join(targetDir, "package.json");
 		if (existsSync(packageJsonPath)) {
@@ -1771,7 +1801,8 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		if (source.ref) {
-			await this.ensureGitRef(targetDir, ["fetch", "origin", source.ref], "FETCH_HEAD");
+			const safeRef = assertSafeGitRef(source.ref);
+			await this.ensureGitRef(targetDir, ["fetch", "origin", safeRef], "FETCH_HEAD");
 			return;
 		}
 

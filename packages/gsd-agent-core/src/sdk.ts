@@ -133,9 +133,17 @@ function getAttributionHeaders(
 	settingsManager: SettingsManager,
 	sessionId?: string,
 ): Record<string, string> | undefined {
+	const hasHostname = (expected: string): boolean => {
+		try {
+			return new URL(model.baseUrl).hostname === expected;
+		} catch {
+			return false;
+		}
+	};
+
 	if (
 		sessionId &&
-		(model.provider === "opencode" || model.provider === "opencode-go" || model.baseUrl.includes("opencode.ai"))
+		(model.provider === "opencode" || model.provider === "opencode-go" || hasHostname("opencode.ai"))
 	) {
 		return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
 	}
@@ -144,7 +152,7 @@ function getAttributionHeaders(
 		return undefined;
 	}
 
-	if (model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai")) {
+	if (model.provider === "openrouter" || hasHostname("openrouter.ai")) {
 		return {
 			"HTTP-Referer": "https://pi.dev",
 			"X-OpenRouter-Title": "pi",
@@ -155,8 +163,8 @@ function getAttributionHeaders(
 	if (
 		model.provider === "cloudflare-workers-ai" ||
 		model.provider === "cloudflare-ai-gateway" ||
-		model.baseUrl.includes("api.cloudflare.com") ||
-		model.baseUrl.includes("gateway.ai.cloudflare.com")
+		hasHostname("api.cloudflare.com") ||
+		hasHostname("gateway.ai.cloudflare.com")
 	) {
 		return {
 			"User-Agent": "pi-coding-agent",

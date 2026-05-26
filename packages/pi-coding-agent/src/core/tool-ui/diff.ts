@@ -6,9 +6,14 @@ import { theme } from "../../theme/theme.js";
  * Format: "+123 content" or "-123 content" or " 123 content" or "     ..."
  */
 function parseDiffLine(line: string): { prefix: string; lineNum: string; content: string } | null {
-	const match = line.match(/^([+-\s])(\s*\d*)\s(.*)$/);
-	if (!match) return null;
-	return { prefix: match[1], lineNum: match[2], content: match[3] };
+	if (line.length < 2) return null;
+	const prefix = line[0];
+	if (prefix !== "+" && prefix !== "-" && prefix !== " ") return null;
+	const separatorIndex = line.indexOf(" ", 1);
+	if (separatorIndex === -1) return null;
+	const lineNum = line.slice(1, separatorIndex);
+	if (!/^\s*\d*$/u.test(lineNum)) return null;
+	return { prefix, lineNum, content: line.slice(separatorIndex + 1) };
 }
 
 /**
