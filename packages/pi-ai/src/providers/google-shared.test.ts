@@ -74,8 +74,7 @@ describe("sanitizeSchemaForGoogle", () => {
 			oneOf: [{ const: "x" }, { const: "y" }],
 		};
 		const result = sanitizeSchemaForGoogle(schema) as any;
-		assert.deepEqual(result.oneOf[0], { enum: ["x"], type: "string" });
-		assert.deepEqual(result.oneOf[1], { enum: ["y"], type: "string" });
+		assert.deepEqual(result, { enum: ["x", "y"], type: "string" });
 	});
 
 	it("recursively sanitizes deeply nested schemas", () => {
