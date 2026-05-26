@@ -1166,6 +1166,48 @@ test('── markdown-renderer: repairStaleRenders reads worktree roadmap projec
   }
 });
 
+test('── markdown-renderer: repairStaleRenders handles descriptor roadmap projection dirs ──', async () => {
+  const tmpDir = makeTmpDir();
+  const worktreeDir = path.join(tmpDir, '.gsd', 'worktrees', 'M001');
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+
+  try {
+    const projectionMilestoneDir = path.join(worktreeDir, '.gsd', 'milestones', 'M001-DESCRIPTOR');
+    fs.mkdirSync(projectionMilestoneDir, { recursive: true });
+
+    insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Core', status: 'complete' });
+
+    const staleRoadmap = makeRoadmapContent([
+      { id: 'S01', title: 'Core', done: false },
+    ]);
+    const descriptorRoadmapPath = path.join(projectionMilestoneDir, 'M001-ROADMAP.md');
+    fs.writeFileSync(descriptorRoadmapPath, staleRoadmap);
+    clearAllCaches();
+
+    const staleBefore = detectStaleRenders(worktreeDir);
+    assert.ok(
+      staleBefore.some(s => s.path === descriptorRoadmapPath && s.reason.includes('S01')),
+      'descriptor worktree projection roadmap should be detected as stale',
+    );
+
+    const repaired = await repairStaleRenders(worktreeDir);
+    assert.ok(repaired > 0, 'repairStaleRenders should repair the descriptor projection');
+
+    clearAllCaches();
+    const staleAfter = detectStaleRenders(worktreeDir);
+    assert.deepStrictEqual(staleAfter, [], 'descriptor stale roadmap should be clear after repair');
+
+    const projectionContent = fs.readFileSync(descriptorRoadmapPath, 'utf-8');
+    assert.ok(projectionContent.includes('[x] **S01:'), 'descriptor projection roadmap is repaired');
+  } finally {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Stale Detection — Missing Task Summary
 // ═══════════════════════════════════════════════════════════════════════════

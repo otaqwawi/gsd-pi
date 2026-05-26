@@ -70,7 +70,8 @@ async function repairStaleRenderFromBasePath(
         `stale-render drift: roadmap path missing milestone segment: ${record.renderPath}`,
       );
     }
-    await renderRoadmapFromDb(basePath, milestoneMatch[1]);
+    const fileMatch = normPath.match(/(?:^|\/)([^/]+)-ROADMAP\.md$/);
+    await renderRoadmapFromDb(basePath, fileMatch?.[1] ?? milestoneMatch[1]);
     return;
   }
 
