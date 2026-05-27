@@ -5,7 +5,7 @@ import { Loader, Markdown, Spacer, Text } from "@gsd/pi-tui";
 import type { InteractiveModeEvent, InteractiveModeStateHost } from "../interactive-mode-state.js";
 import { theme } from "@gsd/pi-coding-agent/theme/theme.js";
 import { AssistantMessageComponent } from "../components/assistant-message.js";
-import { chatTurnFollowsUser } from "../components/chat-turn-connect.js";
+import { connectAssistantToPrecedingUser, reconcileChatTurnConnections } from "../components/chat-turn-connect.js";
 import {
 	ToolExecutionComponent,
 	ToolPhaseSummaryComponent,
@@ -680,7 +680,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							if (!existing) {
 								const connectedToUser =
 									renderedSegments.filter((s) => s.kind === "text-run").length === 0 &&
-									chatTurnFollowsUser(host.chatContainer.children);
+									connectAssistantToPrecedingUser(host.chatContainer.children);
 								const comp = new AssistantMessageComponent(
 									undefined,
 									host.hideThinkingBlock,
@@ -698,6 +698,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 									component: comp,
 								});
 								host.streamingComponent = comp;
+								reconcileChatTurnConnections(host.chatContainer.children);
 							}
 						}
 					}
@@ -894,7 +895,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 
 							const connectedToUser =
 								renderedSegments.filter((s) => s.kind === "text-run").length === 0 &&
-								chatTurnFollowsUser(host.chatContainer.children);
+								connectAssistantToPrecedingUser(host.chatContainer.children);
 							const comp = new AssistantMessageComponent(
 								undefined,
 								host.hideThinkingBlock,
@@ -914,19 +915,22 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							});
 							host.streamingComponent = comp;
 						}
+						reconcileChatTurnConnections(host.chatContainer.children);
 					}
 
 					if (!host.streamingComponent && shouldRenderAssistant) {
+						const connectedToUser = connectAssistantToPrecedingUser(host.chatContainer.children);
 						host.streamingComponent = new AssistantMessageComponent(
 							undefined,
 							host.hideThinkingBlock,
 							host.getMarkdownThemeWithSettings(),
 							timestampFormat,
 							undefined,
-							chatTurnFollowsUser(host.chatContainer.children),
+							connectedToUser,
 						);
-					host.chatContainer.addChild(host.streamingComponent);
-				}
+				host.chatContainer.addChild(host.streamingComponent);
+				reconcileChatTurnConnections(host.chatContainer.children);
+			}
 				if (host.streamingComponent) {
 					host.streamingComponent.setShowMetadata(true);
 					host.streamingComponent.updateContent(host.streamingMessage);
