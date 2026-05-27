@@ -96,9 +96,12 @@ export function normalizeClaudeCodeAgentArguments(args: Record<string, unknown>)
 		}
 	}
 
-	delete args.subagent_type;
-	delete args.Subagent_Type;
-	delete args.subagentType;
+	for (const key of Object.keys(args)) {
+		const lowerKey = key.toLowerCase();
+		if (lowerKey === "subagent_type" || lowerKey === "subagenttype") {
+			delete args[key];
+		}
+	}
 	delete args.prompt;
 	delete args.Prompt;
 	delete args.description;

@@ -9,7 +9,7 @@ import type { TruncationResult } from "@gsd/pi-coding-agent/core/tools/truncate.
 import { Container, Markdown, Spacer, Text } from "@gsd/pi-tui";
 import { theme } from "@gsd/pi-coding-agent/theme/theme.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
-import { connectAssistantToPrecedingUser, reconcileChatTurnConnections } from "./components/chat-turn-connect.js";
+import { chatTurnFollowsUser, reconcileChatTurnConnections } from "./components/chat-turn-connect.js";
 import { BashExecutionComponent } from "./components/bash-execution.js";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.js";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.js";
@@ -143,7 +143,7 @@ export function addMessageToChat(host: InteractiveModeDelegateHost, message: Age
 				break;
 			}
 			case "assistant": {
-				const connectedToUser = connectAssistantToPrecedingUser(host.chatContainer.children);
+				const connectedToUser = chatTurnFollowsUser(host.chatContainer.children);
 				const assistantComponent = new AssistantMessageComponent(
 					message,
 					host.hideThinkingBlock,
@@ -209,7 +209,7 @@ export function renderSessionContext(host: InteractiveModeDelegateHost,
 
 				for (const segment of replaySegments) {
 					if (segment.kind === "assistant") {
-						const connectedToUser = connectAssistantToPrecedingUser(host.chatContainer.children);
+						const connectedToUser = chatTurnFollowsUser(host.chatContainer.children);
 						const assistantComponent = new AssistantMessageComponent(
 							message,
 							host.hideThinkingBlock,

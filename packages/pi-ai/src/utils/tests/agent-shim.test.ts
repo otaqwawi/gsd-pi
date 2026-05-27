@@ -52,6 +52,20 @@ describe("normalizeClaudeCodeAgentArguments", () => {
 			task: "Existing task",
 		});
 	});
+
+	test("removes case-varied subagent type keys after reading them", () => {
+		const args = {
+			SUBAGENT_TYPE: "Explore",
+			prompt: "Inspect repository",
+		};
+
+		normalizeClaudeCodeAgentArguments(args);
+
+		expect(args).toEqual({
+			agent: "scout",
+			task: "Inspect repository",
+		});
+	});
 });
 
 describe("extractNormalizedSubagentCall", () => {
