@@ -103,7 +103,18 @@ test("isUnmergedMilestoneAllowedCommand permits inspection and explicit recovery
   assert.equal(isUnmergedMilestoneAllowedCommand(""), false);
   assert.equal(isUnmergedMilestoneAllowedCommand("auto"), false);
   assert.equal(isUnmergedMilestoneAllowedCommand("next"), false);
+  assert.equal(isUnmergedMilestoneAllowedCommand("start"), false);
+  assert.equal(isUnmergedMilestoneAllowedCommand("do mark all complete"), false);
   assert.equal(isUnmergedMilestoneAllowedCommand("status"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("forensics"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("capture hello"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("knowledge rule foo"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("codebase stats"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("prefs"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("discuss"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("queue"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("quick"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("config"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("worktree list"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("dispatch complete"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("dispatch complete M008"), true);

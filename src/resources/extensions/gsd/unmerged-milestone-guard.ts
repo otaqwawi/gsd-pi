@@ -22,18 +22,13 @@ export interface UnmergedMilestoneBlocker {
   dirtyOverlap: RootDirtyEntry[];
 }
 
-const ALLOWED_COMMANDS = new Set([
-  "help",
-  "h",
-  "?",
-  "status",
-  "logs",
-  "notifications",
-  "inspect",
-  "doctor",
-  "park",
-  "worktree",
-  "wt",
+const BLOCKED_COMMANDS = new Set([
+  "",
+  "auto",
+  "next",
+  "start",
+  "new-milestone",
+  "do",
 ]);
 
 function isRuntimePath(path: string): boolean {
@@ -70,7 +65,7 @@ export function isUnmergedMilestoneAllowedCommand(trimmed: string): boolean {
   if (name === "dispatch") {
     return subcommand === "complete" || subcommand === "complete-milestone";
   }
-  return ALLOWED_COMMANDS.has(name);
+  return !BLOCKED_COMMANDS.has(name);
 }
 
 export async function findUnmergedCompletedMilestones(base: string): Promise<UnmergedMilestoneBlocker[]> {

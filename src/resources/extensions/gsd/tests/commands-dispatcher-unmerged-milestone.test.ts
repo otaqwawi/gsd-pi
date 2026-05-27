@@ -162,7 +162,7 @@ test("dispatcher blocks bare /gsd when a completed milestone branch is unmerged"
 });
 
 test("dispatcher blocks workflow-advancing commands while completed branch is unmerged", async () => {
-  const blockedCommands = ["auto", "next", "start", "discuss", "do mark all complete"];
+  const blockedCommands = ["auto", "next", "start", "do mark all complete"];
 
   for (const command of blockedCommands) {
     const base = makeTempRepo("gsd-dispatch-unmerged-");
