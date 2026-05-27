@@ -79,7 +79,7 @@ describe('register-extension crash handler secondary fixes (#3348)', () => {
     assert.ok(listener, 'installEpipeGuard should register an unhandledRejection handler');
   });
 
-  test('_gsdEpipeGuard writes a crash log and exits for unrecoverable errors', () => {
+  test('_gsdEpipeGuard writes a crash log and routes unrecoverable errors through SIGTERM cleanup path', () => {
     installEpipeGuard();
     const listener = process.listeners("uncaughtException").find((candidate) =>
       candidate.name === "_gsdEpipeGuard"
@@ -88,8 +88,15 @@ describe('register-extension crash handler secondary fixes (#3348)', () => {
 
     const tmpHome = join(tmpdir(), `gsd-crash-exit-test-${randomUUID()}`);
     const origHome = process.env.GSD_HOME;
+    const originalKill = process.kill;
     const originalExit = process.exit;
+    let killSignal: NodeJS.Signals | number | undefined;
     let exitCode: number | string | null | undefined;
+    (process as any).kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+      assert.equal(pid, process.pid);
+      killSignal = signal;
+      throw new Error("process.kill intercepted");
+    }) as typeof process.kill;
     (process as any).exit = (code?: number | string | null | undefined): never => {
       exitCode = code;
       throw new Error("process.exit intercepted");
@@ -98,14 +105,16 @@ describe('register-extension crash handler secondary fixes (#3348)', () => {
     try {
       assert.throws(
         () => listener(new Error("unrecoverable crash guard test"), "uncaughtException"),
-        /process\.exit intercepted/,
+        /process\.(kill|exit) intercepted/,
       );
-      assert.equal(exitCode, 1);
+      assert.equal(killSignal, "SIGTERM");
+      assert.equal(exitCode, 1, "guard should still terminate if SIGTERM path does not exit synchronously");
       const crashDir = join(tmpHome, "crash");
       const logs = readdirSync(crashDir).filter((f) => f.endsWith(".log"));
       assert.equal(logs.length, 1);
       assert.match(readFileSync(join(crashDir, logs[0]), "utf-8"), /unrecoverable crash guard test/);
     } finally {
+      (process as any).kill = originalKill;
       (process as any).exit = originalExit;
       process.env.GSD_HOME = origHome;
       rmSync(tmpHome, { recursive: true, force: true });
