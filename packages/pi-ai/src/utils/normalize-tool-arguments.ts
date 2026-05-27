@@ -107,7 +107,7 @@ export function normalizeToolArguments(toolName: string, args: unknown): unknown
 
 	const canonical = canonicalToolName(toolName);
 
-	if (canonical === "read" || canonical === "write" || canonical === "edit") {
+	if (canonical === "read" || canonical === "write") {
 		aliasPathArguments(args);
 	}
 
