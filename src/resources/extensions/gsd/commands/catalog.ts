@@ -65,6 +65,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "steer", desc: "Hard-steer plan documents during execution" },
   { cmd: "inspect", desc: "Show SQLite DB diagnostics" },
   { cmd: "knowledge", desc: "Add persistent project knowledge (rule, pattern, or lesson)" },
+  { cmd: "memory", desc: "Query/forget project memories" },
   { cmd: "new-milestone", desc: "Create a milestone from a specification document (headless)" },
   { cmd: "new-project", desc: "Bootstrap a new project (use --deep for staged project-level discovery)" },
   { cmd: "parallel", desc: "Parallel milestone orchestration (start, status, stop, merge, watch)" },
