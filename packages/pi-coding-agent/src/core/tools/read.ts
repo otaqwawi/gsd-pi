@@ -38,8 +38,8 @@ const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.md", "AGENTS.MD", "CLAUDE.m
 
 /** Max read output lines shown in the TUI when tool cards are collapsed (errors only). */
 export const READ_TUI_COLLAPSED_MAX_LINES = 10;
-/** Max read output lines shown in the TUI when tool cards are expanded. */
-export const READ_TUI_EXPANDED_MAX_LINES = 20;
+/** Expanded read output is intentionally uncapped in the TUI. */
+export const READ_TUI_EXPANDED_MAX_LINES = Number.POSITIVE_INFINITY;
 
 export function getReadTuiMaxDisplayLines(expanded: boolean): number {
 	return expanded ? READ_TUI_EXPANDED_MAX_LINES : READ_TUI_COLLAPSED_MAX_LINES;
