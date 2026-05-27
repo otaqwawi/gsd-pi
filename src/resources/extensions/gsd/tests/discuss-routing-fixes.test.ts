@@ -52,6 +52,7 @@ function makeDiscussPi() {
 
 function makeDiscussCtx(notifications: Array<{ message: string; level?: string }> = []) {
   return {
+    hasUI: true,
     sessionManager: {
       getSessionId: () => "test-discuss-session",
     },

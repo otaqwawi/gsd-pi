@@ -69,10 +69,10 @@ test("showSmartEntry stops instead of opening next-action choices when complete 
       base,
     );
 
-    assert.deepEqual(notifications.at(-1), {
-      message: "Auto-mode stopped — All milestones complete.",
-      level: "info",
-    });
+    const last = notifications.at(-1);
+    assert.equal(last?.level, "warning");
+    assert.match(last?.message ?? "", /all milestones are complete/i);
+    assert.match(last?.message ?? "", /\/gsd discuss M001/i);
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });

@@ -47,6 +47,7 @@ test("/gsd home keeps the stable user-intent choices", () => {
       "Continue one step",
       "Run automatically",
       "Review status",
+      "Review requirements backlog",
       "Fix or recover",
       "Start or configure",
     ],

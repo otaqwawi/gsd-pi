@@ -155,6 +155,17 @@ function main() {
 	let failureCount = 0
 
 	for (const pkg of packages) {
+		if (pkg.packageName === '@gsd/pi-ai') {
+			process.stderr.write(`\nRunning ${pkg.packageName} package tests via vitest...\n`)
+			if (
+				runPackageScript(getNpmCommand(), ['run', 'test', '-w', pkg.packageName], REPO_ROOT, pkg.packageName) !==
+				0
+			) {
+				failureCount += 1
+			}
+			continue
+		}
+
 		if (pkg.packageName === '@gsd/native') {
 			if (!hasNativeAddon() && !commandExists('cargo')) {
 				process.stderr.write(
