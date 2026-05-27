@@ -7,6 +7,8 @@ import { ToolExecutionComponent, ToolPhaseSummaryComponent } from "./tool-execut
 import { UserMessageComponent } from "./user-message.js";
 
 type ChatTurnComponent = UserMessageComponent | AssistantMessageComponent;
+type UserTurnConnection = { continuesToAssistant: boolean; followsAssistant: boolean };
+type AssistantTurnConnection = { continuesToUser: boolean; connectedToUser: boolean };
 
 function isChatTurnComponent(child: unknown): child is ChatTurnComponent {
 	return child instanceof UserMessageComponent || child instanceof AssistantMessageComponent;
@@ -22,26 +24,10 @@ export function chatTurnFollowsUser(children: readonly unknown[]): boolean {
 	return false;
 }
 
-export function chatTurnFollowsAssistant(children: readonly unknown[]): boolean {
-	for (let i = children.length - 1; i >= 0; i--) {
-		const child = children[i];
-		if (child instanceof Spacer) continue;
-		return child instanceof AssistantMessageComponent;
-	}
-	return false;
-}
-
 /** Recompute connected-rail flags for every user/assistant turn in the chat container. */
 export function reconcileChatTurnConnections(children: readonly unknown[]): void {
-	for (const child of children) {
-		if (child instanceof UserMessageComponent) {
-			child.setContinuesToAssistant(false);
-			child.setFollowsAssistant(false);
-		} else if (child instanceof AssistantMessageComponent) {
-			child.setContinuesToUser(false);
-			child.setConnectedToUser(false);
-		}
-	}
+	const userConnections = new Map<UserMessageComponent, UserTurnConnection>();
+	const assistantConnections = new Map<AssistantMessageComponent, AssistantTurnConnection>();
 
 	let previousTurn: ChatTurnComponent | undefined;
 	for (const child of children) {
@@ -51,15 +37,30 @@ export function reconcileChatTurnConnections(children: readonly unknown[]): void
 			continue;
 		}
 
+		if (child instanceof UserMessageComponent) {
+			userConnections.set(child, { continuesToAssistant: false, followsAssistant: false });
+		} else {
+			assistantConnections.set(child, { continuesToUser: false, connectedToUser: false });
+		}
+
 		if (previousTurn instanceof UserMessageComponent && child instanceof AssistantMessageComponent) {
-			previousTurn.setContinuesToAssistant(true);
-			child.setConnectedToUser(true);
+			userConnections.get(previousTurn)!.continuesToAssistant = true;
+			assistantConnections.get(child)!.connectedToUser = true;
 		} else if (previousTurn instanceof AssistantMessageComponent && child instanceof UserMessageComponent) {
-			previousTurn.setContinuesToUser(true);
-			child.setFollowsAssistant(true);
+			assistantConnections.get(previousTurn)!.continuesToUser = true;
+			userConnections.get(child)!.followsAssistant = true;
 		}
 
 		previousTurn = child;
+	}
+
+	for (const [child, connection] of userConnections) {
+		child.setContinuesToAssistant(connection.continuesToAssistant);
+		child.setFollowsAssistant(connection.followsAssistant);
+	}
+	for (const [child, connection] of assistantConnections) {
+		child.setContinuesToUser(connection.continuesToUser);
+		child.setConnectedToUser(connection.connectedToUser);
 	}
 }
 

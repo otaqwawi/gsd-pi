@@ -26,6 +26,10 @@ function assistant(text: string): AssistantMessageComponent {
 	return new AssistantMessageComponent(message, true);
 }
 
+function renderVersion(component: UserMessageComponent | AssistantMessageComponent): number {
+	return (component as unknown as { renderVersion: number }).renderVersion;
+}
+
 describe("reconcileChatTurnConnections", () => {
 	test("connects consecutive user and assistant turns with no blank spacer lines", () => {
 		const chat = new Container();
@@ -68,5 +72,21 @@ describe("reconcileChatTurnConnections", () => {
 		const lines = chat.render(80).map((line) => stripAnsi(line)).join("\n");
 		assert.doesNotMatch(lines.split("\n")[0] ?? "", /^\s*$/, "user turn should start flush at the top");
 		assert.match(lines, /╰──────╮[\s\S]*╭─ GSD/);
+	});
+
+	test("does not invalidate render caches when connections are unchanged", () => {
+		const chat = new Container();
+		const user = new UserMessageComponent("hi");
+		const response = assistant("Hello!");
+		chat.addChild(user);
+		chat.addChild(response);
+		reconcileChatTurnConnections(chat.children);
+
+		const userRenderVersion = renderVersion(user);
+		const responseRenderVersion = renderVersion(response);
+		reconcileChatTurnConnections(chat.children);
+
+		assert.equal(renderVersion(user), userRenderVersion);
+		assert.equal(renderVersion(response), responseRenderVersion);
 	});
 });

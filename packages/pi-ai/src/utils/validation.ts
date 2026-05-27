@@ -4,14 +4,6 @@ import { Value } from "typebox/value";
 import type { Tool, ToolCall } from "../types.js";
 import { normalizeToolArguments } from "./normalize-tool-arguments.js";
 
-export { isEmptyPathToolArguments, normalizeToolArguments } from "./normalize-tool-arguments.js";
-export {
-	createToolSearchShimResult,
-	extractToolSearchQuery,
-	isToolSearchToolName,
-	parseToolSearchSelectQuery,
-} from "./tool-search-shim.js";
-
 const validatorCache = new WeakMap<object, ReturnType<typeof Compile>>();
 const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
 
