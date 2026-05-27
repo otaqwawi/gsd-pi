@@ -30,9 +30,8 @@ function makeCtx(overrides: {
       select: overrides.select === false ? undefined : async () => "ok",
       ...(overrides.uiMode ? { mode: overrides.uiMode } : {}),
     },
-    // @ts-expect-error test stub
     _notifications: notifications,
-  } as ExtensionCommandContext & { _notifications: typeof notifications };
+  } as unknown as ExtensionCommandContext & { _notifications: typeof notifications };
 }
 
 describe("requiresInteractiveMenu", () => {

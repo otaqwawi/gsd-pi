@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { DISCUSS_TOOLS_ALLOWLIST } from "../constants.ts";
+import type { ToolInfo } from "@gsd/pi-coding-agent";
 import {
   buildMinimalAutoGsdToolSet,
   buildMinimalGsdWorkflowToolSet,
@@ -105,7 +106,7 @@ test("scopeGsdWorkflowToolsForDispatch without unit type pulls registered invest
     setActiveTools: (tools) => {
       activeTools = [...tools];
     },
-    getAllTools: () => [...FULL_REGISTERED_TOOLS].map((name) => ({ name })),
+    getAllTools: () => FULL_REGISTERED_TOOLS.map((name) => ({ name })) as ToolInfo[],
   });
 
   assertIncludesAll(activeTools, INVESTIGATION_TOOLS, "scopeGsdWorkflowToolsForDispatch");
