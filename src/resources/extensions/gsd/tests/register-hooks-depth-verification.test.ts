@@ -246,6 +246,89 @@ test("register-hooks returns hard blocker when depth question is cancelled", asy
   );
 });
 
+test("register-hooks clears deferred approval gate after depth confirmation (headless e2e regression)", async (t) => {
+  const dir = makeTempDir("deferred-clear");
+  const originalCwd = process.cwd();
+  process.chdir(dir);
+  resetWriteGateState(dir);
+
+  t.after(() => {
+    try {
+      resetWriteGateState(dir);
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  const handlers = new Map<string, Array<(event: any, ctx?: any) => Promise<any> | any>>();
+  const pi = {
+    on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any) {
+      const existing = handlers.get(event) ?? [];
+      existing.push(handler);
+      handlers.set(event, existing);
+    },
+  } as any;
+
+  registerHooks(pi, []);
+
+  const questionId = "depth_verification_M001_confirm";
+  const questions = [
+    {
+      id: questionId,
+      question: "Proceed with this headless milestone plan?",
+      options: [
+        { label: "Yes, you got it (Recommended)" },
+        { label: "Not quite" },
+      ],
+    },
+  ];
+
+  await armDepthGate(handlers, "ask_user_questions", questions);
+
+  // message_update can re-arm defer after execution_start cleared it.
+  for (const handler of handlers.get("tool_call") ?? []) {
+    await handler({ toolName: "ask_user_questions", input: { questions } });
+  }
+
+  for (const handler of handlers.get("tool_result") ?? []) {
+    await handler({
+      toolName: "ask_user_questions",
+      input: { questions },
+      details: {
+        response: {
+          answers: {
+            [questionId]: { selected: "Yes, you got it (Recommended)" },
+          },
+        },
+      },
+    });
+  }
+
+  let contextBlock: { block?: boolean; reason?: string } | undefined;
+  for (const handler of handlers.get("tool_call") ?? []) {
+    contextBlock = await handler({
+      toolName: "gsd_summary_save",
+      input: {
+        milestone_id: "M001",
+        artifact_type: "CONTEXT",
+        content: "# M001 Context\n",
+      },
+    });
+  }
+
+  assert.notEqual(
+    contextBlock?.block,
+    true,
+    "context save must not stay blocked by deferred approval gate after confirmation",
+  );
+  assert.equal(
+    shouldBlockContextArtifactSave("CONTEXT", "M001").block,
+    false,
+    "depth verification should unlock milestone context writes",
+  );
+});
+
 test("register-hooks recovers from a cancelled depth question via re-asked ask_user_questions (milestone-hang regression)", async (t) => {
   const dir = makeTempDir("recovery");
   const originalCwd = process.cwd();

@@ -1122,6 +1122,7 @@ export function registerHooks(
             const milestoneIdFromGate = extractDepthVerificationMilestoneId(currentPendingGate);
             if (milestoneIdFromGate) markDepthVerified(milestoneIdFromGate, basePath);
             clearPendingGate(basePath);
+            clearDeferredApprovalGate(basePath);
           }
         }
       }
@@ -1140,6 +1141,7 @@ export function registerHooks(
           markApprovalGateVerified(question.id, basePath);
           markDepthVerified(inferredMilestoneId, basePath);
           clearPendingGate(basePath);
+          clearDeferredApprovalGate(basePath);
         }
         break;
       }
