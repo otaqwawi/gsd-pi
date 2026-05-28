@@ -135,4 +135,28 @@ describe("checkoutBranchWithStashGuard", () => {
     const stashList = git(["stash", "list"], repo).trim();
     assert.equal(stashList, "");
   });
+
+  test("auto-resolves .gsd untracked restore collisions after checkout", (t) => {
+    const repo = createRepo(t);
+    git(["checkout", "-b", "milestone/GSD"], repo);
+    mkdirSync(join(repo, ".gsd"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "DECISIONS.md"), "tracked\n");
+    git(["add", ".gsd/DECISIONS.md"], repo);
+    git(["commit", "-m", "add gsd state"], repo);
+    git(["checkout", "main"], repo);
+
+    mkdirSync(join(repo, ".gsd"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "DECISIONS.md"), "untracked local\n");
+
+    checkoutBranchWithStashGuard(repo, "milestone/GSD", "test-gsd-untracked-collision");
+
+    const branch = git(["branch", "--show-current"], repo).trim();
+    assert.equal(branch, "milestone/GSD");
+    const wtContent = readFileSync(join(repo, ".gsd", "DECISIONS.md"), "utf8");
+    assert.equal(wtContent, "tracked\n");
+    const status = git(["status", "--porcelain"], repo).trim();
+    assert.equal(status, "");
+    const stashList = git(["stash", "list"], repo).trim();
+    assert.equal(stashList, "");
+  });
 });

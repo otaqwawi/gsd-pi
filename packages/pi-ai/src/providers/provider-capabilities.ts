@@ -1,4 +1,4 @@
-// gsd-pi — Provider Capabilities Registry (ADR-005 Phase 1)
+// GSD-2 — Provider Capabilities Registry (ADR-005 Phase 1)
 // Declarative registry of what each API provider supports, consolidating
 // scattered knowledge from *-shared.ts files into a queryable data structure.
 
@@ -105,7 +105,8 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     structuredOutput: true,
     toolCallIdFormat: { maxLength: 64, allowedChars: /^[a-zA-Z0-9_-]+$/ },
     thinkingPersistence: "text-only",
-    unsupportedSchemaFeatures: ["patternProperties", "const"],
+    // google-shared.ts sanitizes patternProperties/const at conversion time.
+    unsupportedSchemaFeatures: [],
   },
   "google-gemini-cli": {
     toolCalling: true,
@@ -114,7 +115,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     structuredOutput: true,
     toolCallIdFormat: { maxLength: 64, allowedChars: /^[a-zA-Z0-9_-]+$/ },
     thinkingPersistence: "text-only",
-    unsupportedSchemaFeatures: ["patternProperties", "const"],
+    unsupportedSchemaFeatures: [],
   },
   "google-vertex": {
     toolCalling: true,
@@ -123,7 +124,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     structuredOutput: true,
     toolCallIdFormat: { maxLength: 64, allowedChars: /^[a-zA-Z0-9_-]+$/ },
     thinkingPersistence: "text-only",
-    unsupportedSchemaFeatures: ["patternProperties", "const"],
+    unsupportedSchemaFeatures: [],
   },
   "mistral-conversations": {
     toolCalling: true,

@@ -27,7 +27,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // packageRoot is always relative to this script — it's the @opengsd/gsd-pi package directory.
 // This is correct whether running as postinstall (inside node_modules/@opengsd/gsd-pi) or
 // via npx (inside a transient cache), since __dirname resolves to the script's location.
-const IS_POSTINSTALL = !!process.env.npm_lifecycle_event
+const IS_POSTINSTALL =
+  process.env.npm_lifecycle_event === 'postinstall' ||
+  process.env.GSD_POSTINSTALL === '1'
 const packageRoot = resolve(__dirname, '..')
 
 // ── Feature flags ──────────────────────────────────────────────────────────
@@ -120,7 +122,7 @@ ${c.cyan}   ██████╗ ███████╗██████╗
   ╚██████╔╝███████║██████╔╝
    ╚═════╝ ╚══════╝╚═════╝${c.reset}
 
-  ${c.bold}Get Shit Done${c.reset} ${c.dim}v${gsdVersion}${c.reset}
+  ${c.bold}Git Ship Done${c.reset} ${c.dim}v${gsdVersion}${c.reset}
 `)
 }
 
