@@ -22,4 +22,19 @@ const fallback = {
 
 const distLogo = join(__dirname, '..', '..', 'dist', 'logo.js')
 
-module.exports = existsSync(distLogo) ? require(distLogo) : fallback
+function isRequireEsmError(err) {
+  return err && typeof err === 'object' && err.code === 'ERR_REQUIRE_ESM'
+}
+
+function loadLogo() {
+  if (!existsSync(distLogo)) return fallback
+
+  try {
+    return require(distLogo)
+  } catch (err) {
+    if (isRequireEsmError(err)) return fallback
+    throw err
+  }
+}
+
+module.exports = loadLogo()
