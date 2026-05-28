@@ -224,6 +224,7 @@ import { CMUX_CHANNELS, type CmuxLogLevel } from "../shared/cmux-events.js";
 import { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
 import { getValidationBlockMessageForBase } from "./validation-block-guard.js";
 import { getUnmergedMilestoneBlockMessageForBase } from "./unmerged-milestone-guard.js";
+import { clearSessionModelOverride } from "./session-model-override.js";
 
 function makeCmuxEmitters(pi: ExtensionAPI) {
   return {
@@ -357,6 +358,13 @@ export function formatAutoStopNotificationPrefix(reason?: string | null): string
   const displayReason = formatAutoStopDisplayReason(reason);
   const prefix = isBlockedStopReason(reason) ? "Auto-mode blocked" : "Auto-mode stopped";
   return displayReason ? `${prefix} — ${displayReason}` : prefix;
+}
+
+function clearSessionModelOverrideForCommandSession(ctx?: ExtensionContext | null): void {
+  const sessionId =
+    s.cmdCtx?.sessionManager?.getSessionId?.() ??
+    ctx?.sessionManager?.getSessionId?.();
+  if (sessionId) clearSessionModelOverride(sessionId);
 }
 
 /**
@@ -1212,6 +1220,7 @@ export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void>
   stopAutoCommandPolling();
   restoreProjectRootEnv();
   restoreMilestoneLockEnv();
+  if (!preservePausedSurface) clearSessionModelOverrideForCommandSession(ctx);
 
   // Clear crash lock and release session lock so the next `/gsd next` does
   // not see a stale lock with the current PID and treat it as a "remote"
@@ -1820,6 +1829,8 @@ export async function stopAuto(
     } catch (err) {
       debugLog("stop-orchestration-stop", { error: err instanceof Error ? err.message : String(err) });
     }
+
+    clearSessionModelOverrideForCommandSession(ctx);
 
     // Reset all session state in one call
     s.resetAfterStop({ preserveCompletionSurface });
