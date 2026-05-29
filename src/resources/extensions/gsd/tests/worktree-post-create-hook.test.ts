@@ -13,7 +13,7 @@ import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { runWorktreePostCreateHook } from "../auto-worktree.ts";
+import { runWorktreePostCreateHook } from "../worktree-post-create-hook.ts";
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "gsd-wt-hook-test-"));
@@ -45,10 +45,50 @@ function writeNodeHookScript(filePath: string, code: string): void {
 test("returns null when no hook path is provided", () => {
   const src = makeTmpDir();
   const wt = makeTmpDir();
+  const previousGsdHome = process.env.GSD_HOME;
   try {
+    process.env.GSD_HOME = join(src, "empty-gsd-home");
     const result = runWorktreePostCreateHook(src, wt, undefined);
     assert.equal(result, null);
   } finally {
+    if (previousGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = previousGsdHome;
+    rmSync(src, { recursive: true, force: true });
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("reads git.worktree_post_create from project preferences without loading auto-worktree", () => {
+  const src = makeTmpDir();
+  const wt = makeTmpDir();
+  const previousGsdHome = process.env.GSD_HOME;
+  try {
+    process.env.GSD_HOME = join(src, "empty-gsd-home");
+    const hooksDir = join(src, ".gsd", "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    writeFileSync(
+      join(src, ".gsd", "PREFERENCES.md"),
+      [
+        "---",
+        "git:",
+        `  worktree_post_create: ${hookPath(".gsd/hooks/post-create")}`,
+        "---",
+        "",
+      ].join("\n"),
+    );
+    const hookFile = hookPath(join(hooksDir, "post-create"));
+    writeNodeHookScript(
+      hookFile,
+      `require("fs").writeFileSync(require("path").join(process.env.WORKTREE_DIR, "configured-hook-ran"), "ok");`,
+    );
+
+    const result = runWorktreePostCreateHook(src, wt);
+
+    assert.equal(result, null);
+    assert.ok(existsSync(join(wt, "configured-hook-ran")), "configured hook should run");
+  } finally {
+    if (previousGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = previousGsdHome;
     rmSync(src, { recursive: true, force: true });
     rmSync(wt, { recursive: true, force: true });
   }
