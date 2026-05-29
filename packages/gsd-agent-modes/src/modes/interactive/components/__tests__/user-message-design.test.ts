@@ -49,11 +49,7 @@ describe("UserMessageComponent connected rail", () => {
 			"date-time-iso",
 		);
 		const raw = component.render(100);
-		const plain = component
-			.render(100)
-			.map((line) => stripVTControlCharacters(line))
-			.join("\n")
-			.split("\n");
+		const plain = raw.map((line) => stripVTControlCharacters(line)).join("\n").split("\n");
 
 		const joined = plain.join("\n");
 		assert.match(joined, /YOU/);
