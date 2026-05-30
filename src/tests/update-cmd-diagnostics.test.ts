@@ -2,6 +2,7 @@
  * Regression test for #3445: gsd update must print both current and latest
  * versions for diagnostics, and bypass npm cache.
  * Regression test for #4145: gsd update must use bun when installed via Bun.
+ * Regression test: gsd update must use pnpm when installed via pnpm.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -108,9 +109,36 @@ test("resolveInstallCommand returns npm command when not running under Bun (#414
   const orig = (process.versions as Record<string, string | undefined>).bun;
   try {
     delete (process.versions as Record<string, string | undefined>).bun;
-    assert.equal(resolveInstallCommand("@opengsd/gsd-pi@latest"), "npm install -g @opengsd/gsd-pi@latest");
+    assert.equal(
+      resolveInstallCommand("@opengsd/gsd-pi@latest", {
+        argv1: "/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js",
+        env: {} as any,
+      }),
+      "npm install -g @opengsd/gsd-pi@latest",
+    );
   } finally {
     if (orig !== undefined) {
+      (process.versions as Record<string, string | undefined>).bun = orig;
+    }
+  }
+});
+
+test("resolveInstallCommand returns pnpm command when installed via pnpm", async () => {
+  const { resolveInstallCommand } = await import("../update-check.js");
+  const orig = (process.versions as Record<string, string | undefined>).bun;
+  try {
+    delete (process.versions as Record<string, string | undefined>).bun;
+    assert.equal(
+      resolveInstallCommand("@opengsd/gsd-pi@latest", {
+        argv1: "/Users/me/Library/pnpm/global/5/node_modules/.pnpm/@opengsd+gsd-pi@1.0.0/node_modules/@opengsd/gsd-pi/dist/loader.js",
+        env: {} as any,
+      }),
+      "pnpm add -g @opengsd/gsd-pi@latest",
+    );
+  } finally {
+    if (orig === undefined) {
+      delete (process.versions as Record<string, string | undefined>).bun;
+    } else {
       (process.versions as Record<string, string | undefined>).bun = orig;
     }
   }
@@ -209,4 +237,25 @@ test("isBunInstall returns true when running under Bun runtime (#4145)", async (
     }
     process.argv[1] = origArgv1;
   }
+});
+
+test("isPnpmInstall detects pnpm user agent, exec path, and PNPM_HOME", async () => {
+  const { isPnpmInstall } = await import("../update-check.js");
+
+  assert.equal(
+    isPnpmInstall("/usr/local/bin/gsd", { npm_config_user_agent: "pnpm/10.12.1 npm/? node/v24.0.0" } as any),
+    true,
+  );
+  assert.equal(
+    isPnpmInstall("/usr/local/bin/gsd", { npm_execpath: "/opt/homebrew/lib/node_modules/pnpm/bin/pnpm.cjs" } as any),
+    true,
+  );
+  assert.equal(
+    isPnpmInstall("/custom/pnpm-home/gsd", { PNPM_HOME: "/custom/pnpm-home" } as any),
+    true,
+  );
+  assert.equal(
+    isPnpmInstall("/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js", {} as any),
+    false,
+  );
 });
