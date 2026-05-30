@@ -52,12 +52,14 @@ function makeRepoWithUnmergedCompletedMilestone(): string {
   return base;
 }
 
-function makeRepoWithStrandedActiveMilestone(): string {
+function makeRepoWithStrandedActiveMilestone(options: { deepPlanning?: boolean } = {}): string {
   const base = mkdtempSync(join(tmpdir(), "gsd-stranded-bootstrap-"));
   mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
   writeFileSync(
     join(base, ".gsd", "PREFERENCES.md"),
-    "---\ngit:\n  isolation: \"none\"\n---\n",
+    options.deepPlanning
+      ? "---\nplanning_depth: deep\ngit:\n  isolation: \"none\"\n---\n"
+      : "---\ngit:\n  isolation: \"none\"\n---\n",
   );
   runGit(base, ["init"]);
   runGit(base, ["config", "user.email", "test@test.com"]);
@@ -75,6 +77,37 @@ function makeRepoWithStrandedActiveMilestone(): string {
 
   openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Active milestone", status: "active" });
+  closeDatabase();
+
+  return base;
+}
+
+function makeRepoWithRecoveredCleanupAndStrandedMismatch(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-headless-stranded-bootstrap-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+  mkdirSync(join(base, ".gsd", "milestones", "M002"), { recursive: true });
+  writeFileSync(
+    join(base, ".gsd", "PREFERENCES.md"),
+    "---\ngit:\n  isolation: \"none\"\n---\n",
+  );
+  runGit(base, ["init"]);
+  runGit(base, ["config", "user.email", "test@test.com"]);
+  runGit(base, ["config", "user.name", "Test"]);
+  writeFileSync(join(base, "README.md"), "# test\n");
+  runGit(base, ["add", "-A"]);
+  runGit(base, ["commit", "-m", "init"]);
+  runGit(base, ["branch", "-M", "main"]);
+
+  runGit(base, ["branch", "milestone/M001"]);
+  runGit(base, ["checkout", "-b", "milestone/M002"]);
+  writeFileSync(join(base, "m002.txt"), "in-progress stranded work\n");
+  runGit(base, ["add", "-A"]);
+  runGit(base, ["commit", "-m", "feat: M002 in progress"]);
+  runGit(base, ["checkout", "main"]);
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Completed milestone", status: "complete" });
+  insertMilestone({ id: "M002", title: "Stranded milestone", status: "active" });
   closeDatabase();
 
   return base;
@@ -188,8 +221,186 @@ test("bootstrap aborts before starting next milestone when completed orphan merg
   }
 });
 
+test("headless bootstrap checks stranded work before recovered-complete shortcut", async () => {
+  const base = makeRepoWithRecoveredCleanupAndStrandedMismatch();
+  const previousCwd = process.cwd();
+  const previousHeadless = process.env.GSD_HEADLESS;
+  const previousParallelWorker = process.env.GSD_PARALLEL_WORKER;
+  const previousMilestoneLock = process.env.GSD_MILESTONE_LOCK;
+  const s = new AutoSession();
+  const notifications: Array<{ message: string; level?: string }> = [];
+
+  try {
+    process.env.GSD_HEADLESS = "1";
+    process.env.GSD_PARALLEL_WORKER = "1";
+    process.env.GSD_MILESTONE_LOCK = "M001";
+
+    const ready = await bootstrapAutoSession(
+      s,
+      makeCtx(notifications) as any,
+      {
+        getThinkingLevel: () => "medium",
+        getActiveTools: () => [],
+        events: { emit: () => {} },
+      } as any,
+      base,
+      false,
+      false,
+      {
+        shouldUseWorktreeIsolation: () => false,
+        registerSigtermHandler: () => {},
+        registerAutoWorkerForSession: () => {},
+        lockBase: () => base,
+        buildLifecycle: () => ({
+          adoptSessionRoot: (sessionBase: string, originalBase?: string) => {
+            s.basePath = sessionBase;
+            if (originalBase !== undefined) {
+              s.originalBasePath = originalBase;
+            } else if (!s.originalBasePath) {
+              s.originalBasePath = sessionBase;
+            }
+          },
+          enterMilestone: () => ({ ok: true, mode: "none", path: base }),
+          adoptOrphanWorktree: <T extends { merged: boolean }>(
+            _mid: string,
+            _base: string,
+            run: () => T,
+          ): T => run(),
+        }) as any,
+      },
+      {
+        classification: "none",
+        lock: null,
+        pausedSession: null,
+        state: null,
+        recovery: null,
+        recoveryPrompt: null,
+        recoveryToolCallCount: 0,
+        artifactSatisfied: false,
+        hasResumableDiskState: false,
+        isBootstrapCrash: false,
+      },
+    );
+
+    const messages = notifications.map((entry) => entry.message).join("\n");
+    assert.equal(ready, false);
+    assert.match(messages, /Stranded work for M002 blocks auto-mode/);
+    assert.doesNotMatch(messages, /all milestones complete/);
+  } finally {
+    if (previousHeadless === undefined) {
+      delete process.env.GSD_HEADLESS;
+    } else {
+      process.env.GSD_HEADLESS = previousHeadless;
+    }
+    if (previousParallelWorker === undefined) {
+      delete process.env.GSD_PARALLEL_WORKER;
+    } else {
+      process.env.GSD_PARALLEL_WORKER = previousParallelWorker;
+    }
+    if (previousMilestoneLock === undefined) {
+      delete process.env.GSD_MILESTONE_LOCK;
+    } else {
+      process.env.GSD_MILESTONE_LOCK = previousMilestoneLock;
+    }
+    try {
+      closeDatabase();
+    } catch {}
+    process.chdir(previousCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("bootstrap adopts stranded active branch even when isolation is none", async () => {
   const base = makeRepoWithStrandedActiveMilestone();
+  const previousCwd = process.cwd();
+  const s = new AutoSession();
+  const adoptCalls: Array<{ milestoneId: string; mode: string }> = [];
+  const enterCalls: string[] = [];
+  const notifications: Array<{ message: string; level?: string }> = [];
+
+  try {
+    const ready = await bootstrapAutoSession(
+      s,
+      makeCtx(notifications) as any,
+      {
+        getThinkingLevel: () => "medium",
+        getActiveTools: () => [],
+        events: { emit: () => {} },
+      } as any,
+      base,
+      false,
+      false,
+      {
+        shouldUseWorktreeIsolation: () => false,
+        registerSigtermHandler: () => {},
+        registerAutoWorkerForSession: () => {},
+        lockBase: () => base,
+        buildLifecycle: () => ({
+          adoptSessionRoot: (sessionBase: string, originalBase?: string) => {
+            s.basePath = sessionBase;
+            if (originalBase !== undefined) {
+              s.originalBasePath = originalBase;
+            } else if (!s.originalBasePath) {
+              s.originalBasePath = sessionBase;
+            }
+          },
+          enterMilestone: (milestoneId: string) => {
+            enterCalls.push(milestoneId);
+            return { ok: true, mode: "none", path: base };
+          },
+          adoptStrandedMilestone: (
+            milestoneId: string,
+            sessionBase: string,
+            _ctx: unknown,
+            opts: { mode: "worktree" | "branch" },
+          ) => {
+            adoptCalls.push({ milestoneId, mode: opts.mode });
+            s.basePath = sessionBase;
+            s.originalBasePath = sessionBase;
+            s.strandedRecoveryIsolationMode = opts.mode;
+            return { ok: true, mode: opts.mode, path: sessionBase };
+          },
+          adoptOrphanWorktree: <T extends { merged: boolean }>(
+            _mid: string,
+            _base: string,
+            run: () => T,
+          ): T => run(),
+        }) as any,
+      },
+      {
+        classification: "none",
+        lock: null,
+        pausedSession: null,
+        state: null,
+        recovery: null,
+        recoveryPrompt: null,
+        recoveryToolCallCount: 0,
+        artifactSatisfied: false,
+        hasResumableDiskState: false,
+        isBootstrapCrash: false,
+      },
+    );
+
+    assert.equal(ready, true);
+    assert.deepEqual(adoptCalls, [{ milestoneId: "M001", mode: "branch" }]);
+    assert.deepEqual(enterCalls, []);
+    assert.equal(s.currentMilestoneId, "M001");
+    assert.equal(s.strandedRecoveryIsolationMode, "branch");
+    assert.match(
+      notifications.map((entry) => entry.message).join("\n"),
+      /Recovering stranded work for M001/,
+    );
+  } finally {
+    try {
+      closeDatabase();
+    } catch {}
+    process.chdir(previousCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap adopts stranded active branch before deep project setup", async () => {
+  const base = makeRepoWithStrandedActiveMilestone({ deepPlanning: true });
   const previousCwd = process.cwd();
   const s = new AutoSession();
   const adoptCalls: Array<{ milestoneId: string; mode: string }> = [];

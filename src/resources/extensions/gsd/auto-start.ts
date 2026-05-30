@@ -1150,19 +1150,6 @@ export async function bootstrapAutoSession(
 
     let state = await deriveState(base);
 
-    if (
-      process.env.GSD_HEADLESS === "1" &&
-      orphanAuditRecovered &&
-      !state.activeMilestone &&
-      state.phase === "complete"
-    ) {
-      ctx.ui.notify(
-        "Auto-mode stopped (Recovered completed milestone cleanup; all milestones complete).",
-        "info",
-      );
-      return releaseLockAndReturn();
-    }
-
     // Stale worktree state recovery (#654)
     if (
       state.activeMilestone &&
@@ -1194,6 +1181,19 @@ export async function bootstrapAutoSession(
         `Recovering stranded work for ${strandedRecoveryAction.milestoneId} before dispatching new units.`,
         "info",
       );
+    }
+
+    if (
+      process.env.GSD_HEADLESS === "1" &&
+      orphanAuditRecovered &&
+      !state.activeMilestone &&
+      state.phase === "complete"
+    ) {
+      ctx.ui.notify(
+        "Auto-mode stopped (Recovered completed milestone cleanup; all milestones complete).",
+        "info",
+      );
+      return releaseLockAndReturn();
     }
 
     // Milestone branch recovery (#601, #2358)
@@ -1329,7 +1329,7 @@ export async function bootstrapAutoSession(
       { hasSurvivorBranch },
     );
 
-    if (deepProjectStagePending) {
+    if (deepProjectStagePending && !strandedRecoveryAction) {
       // Deep project-level setup runs before the first milestone exists. Let
       // the auto loop dispatch workflow-preferences / project / requirements
       // units instead of recursing back through showSmartEntry while this
@@ -1451,9 +1451,8 @@ export async function bootstrapAutoSession(
     s.pendingQuickTasks = [];
     s.currentUnit = null;
     s.currentMilestoneId ??=
-      deepProjectStagePending
-        ? null
-        : strandedRecoveryAction?.milestoneId ?? state.activeMilestone?.id ?? null;
+      strandedRecoveryAction?.milestoneId ??
+      (deepProjectStagePending ? null : state.activeMilestone?.id ?? null);
     s.originalModelId = startModelSnapshot?.id ?? ctx.model?.id ?? null;
     s.originalModelProvider = startModelSnapshot?.provider ?? ctx.model?.provider ?? null;
     s.originalThinkingLevel = startThinkingSnapshot ?? null;
