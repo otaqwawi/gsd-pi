@@ -11,7 +11,6 @@ function hasPnpmPath(value = '') {
   const normalized = value.replace(/\\/g, '/').toLowerCase()
   return (
     normalized.includes('/.pnpm/') ||
-    normalized.includes('/pnpm/') ||
     normalized.includes('/library/pnpm/') ||
     normalized.endsWith('/pnpm') ||
     normalized.endsWith('/pnpm.cjs') ||

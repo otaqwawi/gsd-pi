@@ -144,6 +144,34 @@ test("resolveInstallCommand returns pnpm command when installed via pnpm", async
   }
 });
 
+test("resolveInstallCommand ignores unrelated paths with pnpm directory names", async () => {
+  const { resolveInstallCommand } = await import("../update-check.js");
+  const orig = (process.versions as Record<string, string | undefined>).bun;
+  try {
+    delete (process.versions as Record<string, string | undefined>).bun;
+    assert.equal(
+      resolveInstallCommand("@opengsd/gsd-pi@latest", {
+        argv1: "/home/user/projects/pnpm/app/node_modules/@opengsd/gsd-pi/dist/loader.js",
+        env: {} as any,
+      }),
+      "npm install -g @opengsd/gsd-pi@latest",
+    );
+    assert.equal(
+      resolveInstallCommand("@opengsd/gsd-pi@latest", {
+        argv1: "/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js",
+        env: { npm_execpath: "/opt/tools/pnpm/wrapper/npm-cli.js" } as any,
+      }),
+      "npm install -g @opengsd/gsd-pi@latest",
+    );
+  } finally {
+    if (orig === undefined) {
+      delete (process.versions as Record<string, string | undefined>).bun;
+    } else {
+      (process.versions as Record<string, string | undefined>).bun = orig;
+    }
+  }
+});
+
 test("/gsd update handler fetches latest version through the registry endpoint (#3806)", async () => {
   const originalFetch = globalThis.fetch;
   const originalVersion = process.env.GSD_VERSION;
@@ -219,6 +247,83 @@ test("/gsd update handler suggests pnpm when installed via pnpm", async () => {
   assert.ok(
     notifications.some((notification) =>
       notification.message.includes("Try manually: pnpm add -g @opengsd/gsd-pi@latest")
+    ),
+  );
+});
+
+test("/gsd update handler ignores unrelated pnpm directory names", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalVersion = process.env.GSD_VERSION;
+  const originalUserAgent = process.env.npm_config_user_agent;
+  const originalExecPath = process.env.npm_execpath;
+  const originalPnpmHome = process.env.PNPM_HOME;
+  const originalBunInstall = process.env.BUN_INSTALL;
+  const originalPath = process.env.PATH;
+  const originalArgv1 = process.argv[1];
+  const originalBun = (process.versions as Record<string, string | undefined>).bun;
+  const notifications: Array<{ message: string; level: string }> = [];
+
+  try {
+    process.env.GSD_VERSION = "1.0.0";
+    delete process.env.npm_config_user_agent;
+    delete process.env.npm_execpath;
+    delete process.env.PNPM_HOME;
+    delete process.env.BUN_INSTALL;
+    delete (process.versions as Record<string, string | undefined>).bun;
+    process.env.PATH = "";
+    process.argv[1] = "/home/user/projects/pnpm/app/node_modules/@opengsd/gsd-pi/dist/loader.js";
+    globalThis.fetch = async () => Response.json({ version: "9.9.9" });
+
+    await handleUpdate({
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    } as any);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalVersion === undefined) {
+      delete process.env.GSD_VERSION;
+    } else {
+      process.env.GSD_VERSION = originalVersion;
+    }
+    if (originalUserAgent === undefined) {
+      delete process.env.npm_config_user_agent;
+    } else {
+      process.env.npm_config_user_agent = originalUserAgent;
+    }
+    if (originalExecPath === undefined) {
+      delete process.env.npm_execpath;
+    } else {
+      process.env.npm_execpath = originalExecPath;
+    }
+    if (originalPnpmHome === undefined) {
+      delete process.env.PNPM_HOME;
+    } else {
+      process.env.PNPM_HOME = originalPnpmHome;
+    }
+    if (originalBunInstall === undefined) {
+      delete process.env.BUN_INSTALL;
+    } else {
+      process.env.BUN_INSTALL = originalBunInstall;
+    }
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    process.argv[1] = originalArgv1;
+    if (originalBun === undefined) {
+      delete (process.versions as Record<string, string | undefined>).bun;
+    } else {
+      (process.versions as Record<string, string | undefined>).bun = originalBun;
+    }
+  }
+
+  assert.ok(
+    notifications.some((notification) =>
+      notification.message.includes("Try manually: npm install -g @opengsd/gsd-pi@latest")
     ),
   );
 });

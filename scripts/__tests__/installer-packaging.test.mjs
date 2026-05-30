@@ -26,6 +26,18 @@ test("installer deps module exposes postinstall orchestration", async () => {
   assert.equal(typeof repairPackageDependencies, "function");
 });
 
+test("installer package manager detection ignores unrelated pnpm directory names", async () => {
+  const { detectPackageManager } = await import("../install/npm-global.js");
+  assert.equal(
+    detectPackageManager({}, "/home/user/projects/pnpm/app/node_modules/@opengsd/gsd-pi/dist/loader.js"),
+    "npm",
+  );
+  assert.equal(
+    detectPackageManager({ npm_execpath: "/opt/tools/pnpm/wrapper/npm-cli.js" }, ""),
+    "npm",
+  );
+});
+
 test("installer tarball declares extension-critical externals at the package root", () => {
   for (const dep of REQUIRED_ROOT_EXTERNALS) {
     assert.ok(pkg.dependencies[dep], `root package must depend on ${dep}`);
