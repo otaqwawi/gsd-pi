@@ -16,6 +16,47 @@ export const CUSTOM_SEARCH_TOOL_NAMES = ["search-the-web", "search_and_read", "g
 
 /** Thinking block types that require signature validation by the API */
 const THINKING_TYPES = new Set(["thinking", "redacted_thinking"]);
+const NATIVE_SERVER_TOOL_USE_TYPES = new Set([
+  "server_tool_use",
+  "serverToolUse",
+]);
+const NATIVE_WEB_SEARCH_RESULT_TYPES = new Set([
+  "web_search_tool_result",
+  "webSearchResult",
+]);
+
+function nativeServerToolId(block: any): string | undefined {
+  if (!NATIVE_SERVER_TOOL_USE_TYPES.has(block?.type)) return undefined;
+  return typeof block.id === "string" ? block.id : undefined;
+}
+
+function nativeWebSearchResultId(block: any): string | undefined {
+  if (!NATIVE_WEB_SEARCH_RESULT_TYPES.has(block?.type)) return undefined;
+  const id = block.type === "webSearchResult" ? block.toolUseId : block.tool_use_id;
+  return typeof id === "string" ? id : undefined;
+}
+
+function hasCompleteNativeServerToolReplay(content: any[]): boolean {
+  const pendingToolUseIds = new Set<string>();
+  let sawNativeServerToolUse = false;
+
+  for (const block of content) {
+    const toolUseId = nativeServerToolId(block);
+    if (toolUseId !== undefined) {
+      if (pendingToolUseIds.has(toolUseId)) return false;
+      sawNativeServerToolUse = true;
+      pendingToolUseIds.add(toolUseId);
+      continue;
+    }
+
+    const resultId = nativeWebSearchResultId(block);
+    if (resultId !== undefined) {
+      if (!pendingToolUseIds.delete(resultId)) return false;
+    }
+  }
+
+  return sawNativeServerToolUse && pendingToolUseIds.size === 0;
+}
 
 /**
  * Providers whose Anthropic-Messages endpoint is known to accept the native
@@ -94,11 +135,10 @@ export interface NativeSearchPI {
  * those blocks. The Anthropic API detects the modification and rejects the
  * request with "thinking blocks cannot be modified."
  *
- * Fix: Remove thinking blocks from all assistant messages in the history.
- * In Anthropic's Messages API, the messages array always ends with a user
- * message, so every assistant message is from a previous turn that has been
- * through a store/replay cycle. The model generates fresh thinking for the
- * current turn regardless.
+ * Fix: Remove thinking blocks only from assistant messages that do not carry
+ * native server-tool blocks. Complete native server-tool histories can be
+ * replayed as-is; stripping thinking from those messages is itself a latest
+ * assistant message modification.
  */
 export function stripThinkingFromHistory(
   messages: Array<Record<string, unknown>>
@@ -108,6 +148,9 @@ export function stripThinkingFromHistory(
 
     const content = msg.content;
     if (!Array.isArray(content)) continue;
+    if (hasCompleteNativeServerToolReplay(content)) {
+      continue;
+    }
 
     msg.content = content.filter(
       (block: any) => !THINKING_TYPES.has(block?.type)
