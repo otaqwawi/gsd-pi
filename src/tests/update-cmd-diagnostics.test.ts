@@ -413,6 +413,10 @@ test("isPnpmInstall detects pnpm user agent, exec path, and PNPM_HOME", async ()
     true,
   );
   assert.equal(
+    isPnpmInstall("/usr/local/bin/gsd", { PNPM_HOME: "/custom/pnpm-home", npm_execpath: "/custom/pnpm-home/wrapper/npm-cli.js" } as any),
+    true,
+  );
+  assert.equal(
     isPnpmInstall("/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js", {} as any),
     false,
   );

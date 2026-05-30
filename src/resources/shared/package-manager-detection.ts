@@ -35,5 +35,5 @@ export function isPnpmInstall(
   pnpmBinDirs.push(join(homedir(), 'Library', 'pnpm'))
   pnpmBinDirs.push(join(homedir(), '.local', 'share', 'pnpm'))
 
-  return pnpmBinDirs.some((dir) => pathStartsWith(argv1, dir))
+  return pnpmBinDirs.some((dir) => pathStartsWith(argv1, dir) || pathStartsWith(env.npm_execpath, dir))
 }
