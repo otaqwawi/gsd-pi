@@ -253,6 +253,43 @@ test("ADR-017: terminal drift blockers return blockers instead of repair excepti
   assert.equal(result.repaired.length, 0);
 });
 
+test("ADR-017: terminal blockers return a state snapshot refreshed after co-occurring repairs", async () => {
+  const repairDrift: DriftRecord = { kind: "stale-sketch-flag", mid: "M001", sid: "S02" };
+  const terminalDrift: DriftRecord = {
+    kind: "completed-milestone-reopened",
+    milestoneId: "M001",
+    dbStatus: "active",
+  };
+  let repaired = false;
+  const repairHandler: DriftHandler = {
+    kind: "stale-sketch-flag",
+    detect: (state) => (state.nextAction === "before repair" ? [repairDrift] : []),
+    repair: () => {
+      repaired = true;
+    },
+  };
+  const terminalHandler: DriftHandler = {
+    kind: "completed-milestone-reopened",
+    detect: (state) => (state.nextAction === "before repair" ? [terminalDrift] : []),
+    blocker: () => "manual completed-milestone review required",
+    repair: () => {
+      throw new Error("repair should not run for terminal blockers");
+    },
+  };
+
+  const result = await reconcileBeforeDispatch("/project", {
+    invalidateStateCache: () => {},
+    deriveState: async () =>
+      makeState({ nextAction: repaired ? "after repair" : "before repair" }),
+    registry: [repairHandler, terminalHandler],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.stateSnapshot.nextAction, "after repair");
+  assert.equal(result.repaired.length, 1);
+  assert.deepEqual(result.blockers, ["manual completed-milestone review required"]);
+});
+
 test("ADR-017: terminal drift blockers take precedence over co-occurring repair failures", async () => {
   const terminalDrift: DriftRecord = {
     kind: "completed-milestone-reopened",

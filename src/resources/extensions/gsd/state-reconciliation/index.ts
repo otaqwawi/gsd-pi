@@ -77,6 +77,7 @@ export async function reconcileBeforeDispatch(
 
     const failures: ReconciliationFailureDetail[] = [];
     const blockers: string[] = [];
+    let repairedThisPass = false;
     for (const record of drift) {
       const handler = registry.find((h) => h.kind === record.kind);
       if (!handler) {
@@ -96,17 +97,23 @@ export async function reconcileBeforeDispatch(
       try {
         await handler.repair(record, ctx);
         repaired.push(record);
+        repairedThisPass = true;
       } catch (cause) {
         failures.push({ drift: record, cause });
       }
     }
 
     if (blockers.length > 0) {
+      let blockerState = stateSnapshot;
+      if (repairedThisPass) {
+        deps.invalidateStateCache();
+        blockerState = await deps.deriveState(basePath, deps.deriveStateOptions);
+      }
       return {
         ok: true,
-        stateSnapshot,
+        stateSnapshot: blockerState,
         repaired,
-        blockers: [...new Set([...(stateSnapshot.blockers ?? []), ...blockers])],
+        blockers: [...new Set([...(blockerState.blockers ?? []), ...blockers])],
       };
     }
     if (failures.length > 0) {
