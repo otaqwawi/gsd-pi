@@ -238,6 +238,67 @@ function createPostExecFailureTask(): void {
   });
 }
 
+function createPostExecWarningTask(): void {
+  insertMilestone({ id: "M001" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Test Slice",
+    risk: "low",
+  });
+
+  const srcDir = join(tempDir, "src");
+  mkdirSync(srcDir, { recursive: true });
+  writeFileSync(
+    join(srcDir, "prior.ts"),
+    "export function formatName(name: string): string { return name; }\n",
+    "utf-8",
+  );
+  writeFileSync(
+    join(srcDir, "current.ts"),
+    "export function formatName(first: string, last: string): string { return `${first} ${last}`; }\n",
+    "utf-8",
+  );
+
+  insertTask({
+    id: "T00",
+    sliceId: "S01",
+    milestoneId: "M001",
+    title: "Prior task",
+    status: "complete",
+    keyFiles: ["src/prior.ts"],
+    planning: {
+      description: "Prior task with original signature",
+      estimate: "1h",
+      files: ["src/prior.ts"],
+      verify: "echo pass",
+      inputs: [],
+      expectedOutput: [],
+      observabilityImpact: "",
+    },
+    sequence: 0,
+  });
+
+  insertTask({
+    id: "T01",
+    sliceId: "S01",
+    milestoneId: "M001",
+    title: "Task with signature warning",
+    status: "pending",
+    keyFiles: ["src/current.ts"],
+    planning: {
+      description: "Task that changes a prior function signature",
+      estimate: "1h",
+      files: ["src/current.ts"],
+      verify: "echo pass",
+      inputs: [],
+      expectedOutput: [],
+      observabilityImpact: "",
+    },
+    sequence: 1,
+  });
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("Post-execution blocking failure retry bypass", () => {
@@ -389,7 +450,8 @@ describe("Post-execution blocking failure retry bypass", () => {
       )
     );
 
-    const pauseCallArgs = pauseAutoMock.mock.calls[0]?.arguments?.[2] as
+    const pauseCalls = pauseAutoMock.mock.calls as Array<{ arguments: unknown[] }>;
+    const pauseCallArgs = pauseCalls[0]?.arguments[2] as
       | { message?: string }
       | undefined;
     assert.ok(
@@ -397,6 +459,48 @@ describe("Post-execution blocking failure retry bypass", () => {
         "Post-execution checks failed: [import] src/broken.ts:1"
       )
     );
+  });
+
+  test("strict post-exec warning pause includes warning details", async () => {
+    createPostExecWarningTask();
+    writePreferences({
+      enhanced_verification: true,
+      enhanced_verification_post: true,
+      enhanced_verification_strict: true,
+      verification_auto_fix: true,
+      verification_max_retries: 3,
+    });
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+
+    const result = await runPostUnitVerification({ s, ctx, pi }, pauseAutoMock);
+
+    assert.equal(result, "pause");
+    assert.equal(pauseAutoMock.mock.callCount(), 1);
+    const notifyMessages = ctx.ui.notify.mock.calls.map((c: { arguments: unknown[] }) =>
+      String(c.arguments[0])
+    );
+    assert.ok(
+      notifyMessages.some(
+        (m: string) =>
+          m.includes("Post-execution checks failed ([signature] formatName:") &&
+          m.includes("pausing for human review")
+      )
+    );
+
+    const pauseCalls = pauseAutoMock.mock.calls as Array<{ arguments: unknown[] }>;
+    const pauseCallArgs = pauseCalls[0]?.arguments[2] as
+      | { message?: string }
+      | undefined;
+    assert.ok(
+      pauseCallArgs?.message?.includes(
+        "Post-execution checks failed: [signature] formatName:"
+      )
+    );
+    assert.ok(!pauseCallArgs?.message?.includes("unknown post-execution check failure"));
   });
 
   test("uok gate runner persists post-execution gate failures when enabled", async () => {
