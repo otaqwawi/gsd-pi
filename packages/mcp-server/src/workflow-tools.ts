@@ -7,7 +7,7 @@
 
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import {
@@ -1000,6 +1000,94 @@ async function handleReassessRoadmap(
   );
 }
 
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+function inferMilestoneIdFromProjectDir(projectDir: string): string | undefined {
+  const name = basename(projectDir);
+  const match = /^M\d+(?:-[A-Za-z0-9]+)?$/.exec(name);
+  return match?.[0];
+}
+
+type GateDbModule = {
+  getAllMilestones?: () => Array<{ id?: unknown }>;
+  getMilestoneSlices?: (milestoneId: string) => Array<{ id?: unknown; sequence?: unknown; status?: unknown }>;
+  getPendingGates?: (milestoneId: string, sliceId: string) => Array<Record<string, unknown>>;
+  getGateResults?: (milestoneId: string, sliceId: string) => Array<Record<string, unknown>>;
+};
+
+async function inferSaveGateResultScope(
+  projectDir: string,
+  prepared: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const out = { ...prepared };
+  const gateId = stringValue(out.gateId)?.toUpperCase();
+  const taskId = stringValue(out.taskId);
+
+  if (!stringValue(out.milestoneId)) {
+    const inferredMilestoneId = inferMilestoneIdFromProjectDir(projectDir);
+    if (inferredMilestoneId) out.milestoneId = inferredMilestoneId;
+  }
+
+  if (stringValue(out.milestoneId) && stringValue(out.sliceId)) return out;
+  if (!gateId) return out;
+
+  const { ensureDbOpen } = await importLocalModule<WorkflowDbBootstrapModule>(
+    "../../../src/resources/extensions/gsd/bootstrap/dynamic-tools.js",
+  );
+  if (!(await ensureDbOpen(projectDir))) return out;
+
+  const db = await importLocalModule<GateDbModule>("../../../src/resources/extensions/gsd/gsd-db.js");
+  if (!db.getMilestoneSlices || !db.getPendingGates || !db.getGateResults) return out;
+
+  const milestoneFilter = stringValue(out.milestoneId);
+  const sliceFilter = stringValue(out.sliceId);
+  const milestones = milestoneFilter
+    ? [{ id: milestoneFilter }]
+    : (db.getAllMilestones?.() ?? []).filter((milestone) => stringValue(milestone.id));
+
+  const candidates: Array<{ milestoneId: string; sliceId: string; taskId?: string }> = [];
+  for (const milestone of milestones) {
+    const milestoneId = stringValue(milestone.id);
+    if (!milestoneId) continue;
+    const slices = db.getMilestoneSlices(milestoneId)
+      .filter((slice) => {
+        const sliceId = stringValue(slice.id);
+        return sliceId && (!sliceFilter || sliceId === sliceFilter);
+      });
+
+    for (const slice of slices) {
+      const sliceId = stringValue(slice.id);
+      if (!sliceId) continue;
+      const rows = [
+        ...db.getPendingGates(milestoneId, sliceId),
+        ...db.getGateResults(milestoneId, sliceId),
+      ];
+      for (const row of rows) {
+        if (stringValue(row.gate_id)?.toUpperCase() !== gateId) continue;
+        const rowTaskId = stringValue(row.task_id) ?? "";
+        if (taskId && rowTaskId !== taskId) continue;
+        candidates.push({ milestoneId, sliceId, taskId: rowTaskId || undefined });
+      }
+    }
+  }
+
+  const unique = new Map<string, { milestoneId: string; sliceId: string; taskId?: string }>();
+  for (const candidate of candidates) {
+    unique.set(`${candidate.milestoneId}/${candidate.sliceId}/${candidate.taskId ?? ""}`, candidate);
+  }
+
+  if (unique.size === 1) {
+    const only = [...unique.values()][0]!;
+    if (!stringValue(out.milestoneId)) out.milestoneId = only.milestoneId;
+    if (!stringValue(out.sliceId)) out.sliceId = only.sliceId;
+    if (!stringValue(out.taskId) && only.taskId) out.taskId = only.taskId;
+  }
+
+  return out;
+}
+
 async function handleSaveGateResult(
   projectDir: string,
   args: z.infer<typeof saveGateResultSchema>,
@@ -1103,6 +1191,8 @@ const projectDirParam = z
   .string()
   .optional()
   .describe("Optional. Omit this field — the server defaults to its current working directory, which is already the correct project or worktree root.");
+
+const unknownRecord = z.record(z.string(), z.unknown());
 
 const nonEmptyString = (field: string) =>
   z.string().trim().min(1, `${field} must be a non-empty string`);
@@ -1283,15 +1373,56 @@ const reassessRoadmapSchema = z.object(reassessRoadmapParams);
 
 const saveGateResultParams = {
   projectDir: projectDirParam,
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
-  sliceId: z.string().describe("Slice ID (e.g. S01)"),
-  gateId: z.string().describe("Gate ID (e.g. Q3, Q4, Q5, Q6, Q7, Q8, MV01, MV02, MV03, MV04). Accepts any string for forward-compatibility with new gates."),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
+  sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
+  gateId: nonEmptyString("gateId").describe("Gate ID (e.g. Q3, Q4, Q5, Q6, Q7, Q8, MV01, MV02, MV03, MV04). Accepts any string for forward-compatibility with new gates."),
   taskId: z.string().optional().describe("Task ID for task-scoped gates"),
   verdict: z.enum(["pass", "flag", "omitted"]).describe("Gate verdict"),
-  rationale: z.string().describe("One-sentence justification"),
+  rationale: nonEmptyString("rationale").describe("One-sentence justification"),
   findings: z.string().optional().describe("Detailed markdown findings"),
 };
 const saveGateResultSchema = z.object(saveGateResultParams);
+
+const saveGateResultIncomingParams = {
+  projectDir: projectDirParam,
+  milestoneId: z.string().optional().describe("Milestone ID (e.g. M001). Required unless it can be inferred from the active worktree or pending gate row."),
+  sliceId: z.string().optional().describe("Slice ID (e.g. S01). Required unless it can be inferred from the active pending gate row."),
+  gateId: z.string().optional().describe("Gate ID (e.g. Q3, Q4, Q5, Q6, Q7, Q8, MV01, MV02, MV03, MV04)"),
+  taskId: z.string().optional().describe("Task ID for task-scoped gates"),
+  verdict: z.string().optional().describe("Gate verdict: pass, flag, or omitted"),
+  rationale: z.string().optional().describe("One-sentence justification"),
+  findings: z.string().optional().describe("Detailed markdown findings"),
+  milestone_id: z.string().optional(),
+  mid: z.string().optional(),
+  milestone: z.string().optional(),
+  slice_id: z.string().optional(),
+  sid: z.string().optional(),
+  slice: z.string().optional(),
+  gate_id: z.string().optional(),
+  gate: z.string().optional(),
+  questionId: z.string().optional(),
+  question_id: z.string().optional(),
+  task_id: z.string().optional(),
+  tid: z.string().optional(),
+  task: z.string().optional(),
+  result: z.string().optional(),
+  status: z.string().optional(),
+  outcome: z.string().optional(),
+  reason: z.string().optional(),
+  summary: z.string().optional(),
+  justification: z.string().optional(),
+  explanation: z.string().optional(),
+  finding: z.string().optional(),
+  details: z.string().optional(),
+  analysis: z.string().optional(),
+  report: z.string().optional(),
+  arguments: unknownRecord.optional(),
+  args: unknownRecord.optional(),
+  params: unknownRecord.optional(),
+  input: unknownRecord.optional(),
+  payload: unknownRecord.optional(),
+};
+const saveGateResultIncomingSchema = z.object(saveGateResultIncomingParams);
 
 const replanSliceParams = {
   projectDir: projectDirParam,
@@ -1964,12 +2095,16 @@ export function registerWorkflowTools(
   server.tool(
     "gsd_save_gate_result",
     "Save a quality gate result to the GSD database.",
-    saveGateResultParams,
+    saveGateResultIncomingParams,
     async (args: Record<string, unknown>) => {
+      const incoming = parseWorkflowArgs(saveGateResultIncomingSchema, args);
       const { prepareSaveGateResultArguments } = await importLocalModule<{
         prepareSaveGateResultArguments: (raw: unknown) => unknown;
       }>("../../../src/resources/extensions/gsd/tools/save-gate-result-args.js");
-      const prepared = prepareSaveGateResultArguments(args);
+      const prepared = await inferSaveGateResultScope(
+        incoming.projectDir,
+        prepareSaveGateResultArguments(incoming) as Record<string, unknown>,
+      );
       const record =
         prepared !== null && typeof prepared === "object" && !Array.isArray(prepared)
           ? (prepared as Record<string, unknown>)

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 
 import { symlinkSync, realpathSync } from "node:fs";
 
@@ -2221,6 +2222,28 @@ export const executeTaskComplete = async (params, projectDir) => {
       assert.equal(gateRows.length, 1);
       assert.equal(gateRows[0]["status"], "complete");
       assert.equal(gateRows[0]["verdict"], "pass");
+
+      const gateInputSchema = z.object(gateTool!.params as any);
+      const inferredGateArgs = gateInputSchema.parse({
+        projectDir: base,
+        gateId: "Q4",
+        verdict: "omitted",
+        rationale: "No existing requirements are touched by this slice.",
+        findings: "",
+      });
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(inferredGateArgs, "milestoneId"),
+        false,
+        "MCP input schema must allow gate result calls before milestoneId is inferred",
+      );
+      const inferredGateResult = await gateTool!.handler(inferredGateArgs);
+      assert.match((inferredGateResult as any).content[0].text as string, /Gate Q4 result saved/);
+      const inferredGateRows = _getAdapter()!.prepare(
+        "SELECT status, verdict, rationale FROM quality_gates WHERE milestone_id = ? AND slice_id = ? AND gate_id = ?",
+      ).all("M006", "S06", "Q4") as Array<Record<string, unknown>>;
+      assert.equal(inferredGateRows.length, 1);
+      assert.equal(inferredGateRows[0]["status"], "complete");
+      assert.equal(inferredGateRows[0]["verdict"], "omitted");
 
       await taskTool!.handler({
         projectDir: base,
