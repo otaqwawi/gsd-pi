@@ -1542,6 +1542,7 @@ export class BridgeService {
   async dispose(): Promise<void> {
     this.detachStdoutReader?.();
     this.detachStdoutReader = null;
+    this.subscribers.clear();
     this.terminalSubscribers.clear();
     for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.timeout);
@@ -1827,7 +1828,56 @@ export function getProjectBridgeServiceForCwd(projectCwd: string): BridgeService
   const deps = getBridgeDeps();
   const service = new BridgeService(config, deps);
   projectBridgeRegistry.set(resolvedPath, service);
+  // Ensure bridges (and their child processes) are reclaimed on shutdown.
+  installBridgeShutdownHooks();
   return service;
+}
+
+/**
+ * Dispose the bridge for a single project and drop it from the registry,
+ * reclaiming its spawned RPC child process. Use when a project is no longer
+ * served (e.g. its last SSE subscriber disconnected).
+ */
+export async function disposeProjectBridge(projectCwd: string): Promise<void> {
+  const resolvedPath = resolve(projectCwd);
+  const service = projectBridgeRegistry.get(resolvedPath);
+  if (!service) return;
+  projectBridgeRegistry.delete(resolvedPath);
+  await service.dispose();
+}
+
+/**
+ * Dispose every registered project bridge (and its RPC child process) and clear
+ * the registry. Wire this into the web server's shutdown path so per-project
+ * bridges and their child processes are reclaimed instead of leaking for the
+ * process lifetime. Previously only the test reset path disposed bridges.
+ */
+export async function disposeAllProjectBridges(): Promise<void> {
+  const disposePromises: Promise<void>[] = [];
+  for (const service of projectBridgeRegistry.values()) {
+    disposePromises.push(service.dispose().catch(() => { /* swallow */ }));
+  }
+  projectBridgeRegistry.clear();
+  await Promise.all(disposePromises);
+}
+
+let bridgeShutdownHooksInstalled = false;
+
+/**
+ * Install one-shot process-shutdown hooks that dispose all project bridges.
+ * Idempotent — safe to call from multiple web entrypoints. Hooks are registered
+ * with `process.once` so they don't accumulate across calls.
+ */
+export function installBridgeShutdownHooks(): void {
+  if (bridgeShutdownHooksInstalled) return;
+  bridgeShutdownHooksInstalled = true;
+
+  const dispose = () => {
+    void disposeAllProjectBridges();
+  };
+  process.once("exit", dispose);
+  process.once("SIGINT", dispose);
+  process.once("SIGTERM", dispose);
 }
 
 /**
