@@ -408,6 +408,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium
+
       - uses: ./.github/actions/restore-ci-build-artifacts
 
       - uses: ./.github/actions/cache-nextjs
