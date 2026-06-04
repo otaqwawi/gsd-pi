@@ -820,6 +820,38 @@ test("executeUatResultSave rejects saved UAT without fresh UAT-owned evidence", 
   }
 });
 
+test("executeUatResultSave rejects an unrecognized uatType", async () => {
+  const base = makeTmpBase();
+  const worktree = join(base, ".gsd", "worktrees", "M001");
+  try {
+    openTestDb(base);
+    mkdirSync(worktree, { recursive: true });
+    seedMilestone("M001", "Milestone One");
+    seedSlice("M001", "S06", "complete");
+
+    const result = await inProjectDir(worktree, () => executeUatResultSave({
+      milestoneId: "M001",
+      sliceId: "S06",
+      uatType: "hallucinated-mode",
+      verdict: "PASS",
+      checks: [{
+        id: "UAT-01",
+        description: "Static artifact contract passes",
+        mode: "artifact",
+        result: "PASS",
+        evidence: [{ kind: "gsd_uat_exec", ref: "some-ref" }],
+      }],
+      notes: "Should fail before evidence validation.",
+    } as unknown as Parameters<typeof executeUatResultSave>[0], worktree));
+
+    assert.equal(result.isError, true);
+    assert.match(String(result.content[0]?.text), /uatType must be one of/);
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
 test("executeUatResultSave rejects artifact-driven PASS with human follow-up checks", async () => {
   const base = makeTmpBase();
   const worktree = join(base, ".gsd", "worktrees", "M001");

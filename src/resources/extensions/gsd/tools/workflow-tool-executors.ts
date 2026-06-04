@@ -1067,10 +1067,22 @@ function mergeCanonicalPresentation(params: UatResultSaveParams): UatResultSaveP
   };
 }
 
+const VALID_UAT_TYPES: readonly UatType[] = [
+  "artifact-driven",
+  "browser-executable",
+  "runtime-executable",
+  "live-runtime",
+  "mixed",
+  "human-experience",
+];
+
 function ensureUatRequiredFields(params: UatResultSaveParams): string | null {
   if (!isNonEmptyString(params.milestoneId)) return "milestoneId is required";
   if (!isNonEmptyString(params.sliceId)) return "sliceId is required";
   if (!isNonEmptyString(params.uatType)) return "uatType is required";
+  if (!(VALID_UAT_TYPES as readonly string[]).includes(params.uatType)) {
+    return `uatType must be one of: ${VALID_UAT_TYPES.join(", ")}`;
+  }
   if (!["PASS", "FAIL", "PARTIAL"].includes(params.verdict)) return "verdict must be PASS, FAIL, or PARTIAL";
   if (!Array.isArray(params.checks) || params.checks.length === 0) return "checks must contain at least one UAT check";
   if (!params.presentation || !Array.isArray(params.presentation.presentedTools)) return "presentation.presentedTools is required";
