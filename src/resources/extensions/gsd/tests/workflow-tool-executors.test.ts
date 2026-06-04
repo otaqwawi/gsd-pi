@@ -75,6 +75,11 @@ test("closeout executors reject phase escalation from the wrong active auto unit
     const milestone = await executeCompleteMilestone({} as Parameters<typeof executeCompleteMilestone>[0], "/tmp/project");
     assert.equal(milestone.isError, true);
     assert.match(String(milestone.details.error), /complete_milestone may only run from complete-milestone/);
+
+    const uat = await executeUatResultSave({} as Parameters<typeof executeUatResultSave>[0], "/tmp/project");
+    assert.equal(uat.isError, true);
+    assert.match(String(uat.details.error), /save_uat_result may only run from run-uat/);
+    assert.match(String(uat.details.error), /Tool Contract failure/);
   } finally {
     autoSession.reset();
   }
@@ -637,6 +642,210 @@ test("executeUatResultSave accepts gsd_uat_exec evidence written in a milestone 
     );
     assert.match(assessment, /Runtime path C:\\\\tmp\\\|uat evidence/);
     assert.match(assessment, /backslash \\\\ and pipe \\\|/);
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeUatResultSave supplies canonical presentation and normalizes verdict casing", async () => {
+  const base = makeTmpBase();
+  const worktree = join(base, ".gsd", "worktrees", "M001");
+  const worktreeExecDir = join(worktree, ".gsd", "exec");
+  const evidenceId = "uat-lowercase-verdict";
+  try {
+    openTestDb(base);
+    seedMilestone("M001", "Milestone One");
+    seedSlice("M001", "S03", "complete");
+    mkdirSync(worktreeExecDir, { recursive: true });
+    writeFileSync(
+      join(worktreeExecDir, `${evidenceId}.meta.json`),
+      JSON.stringify({
+        id: evidenceId,
+        metadata: {
+          kind: "uat_exec",
+          milestoneId: "M001",
+          sliceId: "S03",
+          checkId: "UAT-01",
+          intent: "uat-artifact-check",
+        },
+      }),
+      "utf-8",
+    );
+
+    const result = await inProjectDir(worktree, () => executeUatResultSave({
+      milestoneId: "M001",
+      sliceId: "S03",
+      uatType: "artifact-driven",
+      verdict: "pass",
+      checks: [{
+        id: "UAT-01",
+        description: "Static artifact contract passes",
+        mode: "artifact",
+        result: "PASS",
+        evidence: [{ kind: "gsd_uat_exec", ref: evidenceId }],
+        notes: "Artifact check passed.",
+      }],
+      notes: "UAT passed with canonical presentation supplied by the executor.",
+    } as unknown as Parameters<typeof executeUatResultSave>[0], worktree));
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.details.verdict, "PASS");
+
+    const attempt = JSON.parse(readFileSync(
+      join(base, ".gsd", "uat", "M001", "S03", "attempt-1.json"),
+      "utf-8",
+    )) as { presentation?: { toolPresentationPlanId?: string; presentedTools?: string[] } };
+    assert.equal(attempt.presentation?.toolPresentationPlanId, "run-uat/default-v1");
+    assert.ok(attempt.presentation?.presentedTools?.includes("gsd_uat_result_save"));
+    assert.ok(attempt.presentation?.presentedTools?.includes("read"));
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeUatResultSave merges canonical plan ID and read-only tools when presentation lacks plan ID", async () => {
+  const base = makeTmpBase();
+  const worktree = join(base, ".gsd", "worktrees", "M001");
+  const worktreeExecDir = join(worktree, ".gsd", "exec");
+  const evidenceId = "uat-no-plan-id-evidence";
+  try {
+    openTestDb(base);
+    seedMilestone("M001", "Milestone One");
+    seedSlice("M001", "S05", "complete");
+    mkdirSync(worktreeExecDir, { recursive: true });
+    writeFileSync(
+      join(worktreeExecDir, `${evidenceId}.meta.json`),
+      JSON.stringify({
+        id: evidenceId,
+        metadata: {
+          kind: "uat_exec",
+          milestoneId: "M001",
+          sliceId: "S05",
+          checkId: "UAT-01",
+          intent: "uat-artifact-check",
+        },
+      }),
+      "utf-8",
+    );
+
+    const result = await inProjectDir(worktree, () => executeUatResultSave({
+      milestoneId: "M001",
+      sliceId: "S05",
+      uatType: "artifact-driven",
+      verdict: "PASS",
+      checks: [{
+        id: "UAT-01",
+        description: "Presentation plan ID absent from provider call",
+        mode: "artifact",
+        result: "PASS",
+        evidence: [{ kind: "gsd_uat_exec", ref: evidenceId }],
+        notes: "Canonical merge should apply even when toolPresentationPlanId is absent.",
+      }],
+      presentation: {
+        surface: "mcp",
+        presentedTools: [
+          "gsd_uat_exec",
+          "gsd_uat_result_save",
+          "gsd_resume",
+          "gsd_milestone_status",
+          "gsd_journal_query",
+        ],
+        blockedTools: [
+          { name: "gsd_exec", reason: "forbidden during run-uat" },
+          { name: "gsd_summary_save", reason: "forbidden during run-uat" },
+          { name: "gsd_save_gate_result", reason: "forbidden during run-uat" },
+        ],
+      },
+      notes: "Provider omitted toolPresentationPlanId; executor must canonicalize.",
+    } as unknown as Parameters<typeof executeUatResultSave>[0], worktree));
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.details.verdict, "PASS");
+
+    const attempt = JSON.parse(readFileSync(
+      join(base, ".gsd", "uat", "M001", "S05", "attempt-1.json"),
+      "utf-8",
+    )) as { presentation?: { toolPresentationPlanId?: string; presentedTools?: string[] } };
+    assert.equal(attempt.presentation?.toolPresentationPlanId, "run-uat/default-v1");
+    assert.ok(attempt.presentation?.presentedTools?.includes("read"), "read-only tool must be merged in");
+    assert.ok(attempt.presentation?.presentedTools?.includes("gsd_uat_result_save"));
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeUatResultSave rejects saved UAT without fresh UAT-owned evidence", async () => {
+  const base = makeTmpBase();
+  const worktree = join(base, ".gsd", "worktrees", "M001");
+  const worktreeExecDir = join(worktree, ".gsd", "exec");
+  const evidenceId = "generic-exec-evidence";
+  try {
+    openTestDb(base);
+    seedMilestone("M001", "Milestone One");
+    seedSlice("M001", "S04", "complete");
+    mkdirSync(worktreeExecDir, { recursive: true });
+    writeFileSync(
+      join(worktreeExecDir, `${evidenceId}.meta.json`),
+      JSON.stringify({
+        id: evidenceId,
+        metadata: { kind: "exec" },
+      }),
+      "utf-8",
+    );
+
+    const result = await inProjectDir(worktree, () => executeUatResultSave({
+      milestoneId: "M001",
+      sliceId: "S04",
+      uatType: "artifact-driven",
+      verdict: "PASS",
+      checks: [{
+        id: "UAT-01",
+        description: "Static artifact contract passes",
+        mode: "artifact",
+        result: "PASS",
+        evidence: [{ kind: "gsd_exec", ref: evidenceId }],
+        notes: "Generic evidence should not satisfy fresh UAT evidence.",
+      }],
+      notes: "UAT should not pass without fresh UAT-owned evidence.",
+    } as unknown as Parameters<typeof executeUatResultSave>[0], worktree));
+
+    assert.equal(result.isError, true);
+    assert.match(String(result.content[0]?.text), /fresh gsd_uat_exec evidence/);
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeUatResultSave rejects an unrecognized uatType", async () => {
+  const base = makeTmpBase();
+  const worktree = join(base, ".gsd", "worktrees", "M001");
+  try {
+    openTestDb(base);
+    mkdirSync(worktree, { recursive: true });
+    seedMilestone("M001", "Milestone One");
+    seedSlice("M001", "S06", "complete");
+
+    const result = await inProjectDir(worktree, () => executeUatResultSave({
+      milestoneId: "M001",
+      sliceId: "S06",
+      uatType: "hallucinated-mode",
+      verdict: "PASS",
+      checks: [{
+        id: "UAT-01",
+        description: "Static artifact contract passes",
+        mode: "artifact",
+        result: "PASS",
+        evidence: [{ kind: "gsd_uat_exec", ref: "some-ref" }],
+      }],
+      notes: "Should fail before evidence validation.",
+    } as unknown as Parameters<typeof executeUatResultSave>[0], worktree));
+
+    assert.equal(result.isError, true);
+    assert.match(String(result.content[0]?.text), /uatType must be one of/);
   } finally {
     closeDatabase();
     cleanup(base);

@@ -48,9 +48,11 @@ import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { parseProject } from "../schemas/parsers.js";
 import { getAutoRuntimeSnapshot } from "../auto-runtime-state.js";
 import {
+  buildRunUatResultPresentation,
   canonicalWorkflowToolName,
   parseMcpToolName,
   RUN_UAT_FORBIDDEN_TOOL_NAMES,
+  RUN_UAT_TOOL_PRESENTATION_PLAN_ID,
   RUN_UAT_WORKFLOW_TOOL_NAMES,
 } from "../tool-presentation-plan.js";
 
@@ -90,7 +92,7 @@ function blockIfWrongAutoUnit(requiredUnitType: string, operation: string): Tool
   if (!snapshot.active || !snapshot.currentUnit) return null;
   if (snapshot.currentUnit.type === requiredUnitType) return null;
 
-  const error = `HARD BLOCK: ${operation} may only run from ${requiredUnitType}; active unit is ${snapshot.currentUnit.type}. The orchestrator owns phase transitions.`;
+  const error = `HARD BLOCK: Tool Contract failure: ${operation} may only run from ${requiredUnitType}; active unit is ${snapshot.currentUnit.type}. Fix unit-tool-contracts.ts or the active Unit prompt. The orchestrator owns phase transitions.`;
   return {
     content: [{ type: "text", text: error }],
     details: { operation, error },
@@ -449,6 +451,9 @@ export interface UatEvidenceRef {
   kind: "gsd_uat_exec" | "gsd_exec" | "screenshot" | "log" | "url" | "browser";
   ref: string;
   note?: string;
+  unitType?: string;
+  tool?: string;
+  executionId?: string;
 }
 
 export interface UatCheckResultInput {
@@ -1016,10 +1021,68 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function mergeBlockedTools(
+  current: UatPresentationInput["blockedTools"] | undefined,
+  canonical: UatPresentationInput["blockedTools"],
+): UatPresentationInput["blockedTools"] {
+  const merged = new Map<string, { name: string; reason: string }>();
+  for (const entry of [...(current ?? []), ...canonical]) {
+    merged.set(canonicalWorkflowToolName(parseMcpToolName(entry.name)?.tool ?? entry.name), entry);
+  }
+  return [...merged.values()];
+}
+
+function mergePresentedTools(current: readonly string[] | undefined, canonical: readonly string[]): string[] {
+  return [...new Set([...(current ?? []), ...canonical])];
+}
+
+function normalizeUatVerdict(params: UatResultSaveParams): UatResultSaveParams {
+  const raw = params as Partial<UatResultSaveParams> & Record<string, unknown>;
+  if (typeof raw.verdict === "string") {
+    return { ...params, verdict: raw.verdict.toUpperCase() as UatVerdict };
+  }
+  return params;
+}
+
+function supplyDefaultPresentation(params: UatResultSaveParams): UatResultSaveParams {
+  const raw = params as Partial<UatResultSaveParams> & Record<string, unknown>;
+  if (!raw.presentation) {
+    return { ...params, presentation: buildRunUatResultPresentation() };
+  }
+  return params;
+}
+
+function mergeCanonicalPresentation(params: UatResultSaveParams): UatResultSaveParams {
+  const canonicalPresentation = buildRunUatResultPresentation();
+  const providedPresentation = params.presentation as Partial<UatPresentationInput>;
+  return {
+    ...params,
+    presentation: {
+      ...providedPresentation,
+      surface: providedPresentation.surface ?? canonicalPresentation.surface,
+      presentedTools: mergePresentedTools(providedPresentation.presentedTools, canonicalPresentation.presentedTools),
+      blockedTools: mergeBlockedTools(providedPresentation.blockedTools, canonicalPresentation.blockedTools),
+      toolPresentationPlanId: RUN_UAT_TOOL_PRESENTATION_PLAN_ID,
+    } as UatPresentationInput,
+  };
+}
+
+const VALID_UAT_TYPES: readonly UatType[] = [
+  "artifact-driven",
+  "browser-executable",
+  "runtime-executable",
+  "live-runtime",
+  "mixed",
+  "human-experience",
+];
+
 function ensureUatRequiredFields(params: UatResultSaveParams): string | null {
   if (!isNonEmptyString(params.milestoneId)) return "milestoneId is required";
   if (!isNonEmptyString(params.sliceId)) return "sliceId is required";
   if (!isNonEmptyString(params.uatType)) return "uatType is required";
+  if (!(VALID_UAT_TYPES as readonly string[]).includes(params.uatType)) {
+    return `uatType must be one of: ${VALID_UAT_TYPES.join(", ")}`;
+  }
   if (!["PASS", "FAIL", "PARTIAL"].includes(params.verdict)) return "verdict must be PASS, FAIL, or PARTIAL";
   if (!Array.isArray(params.checks) || params.checks.length === 0) return "checks must contain at least one UAT check";
   if (!params.presentation || !Array.isArray(params.presentation.presentedTools)) return "presentation.presentedTools is required";
@@ -1153,6 +1216,15 @@ function validateUatChecks(basePath: string, params: UatResultSaveParams): strin
     }
   }
   return null;
+}
+
+function validateFreshUatOwnedEvidence(params: UatResultSaveParams): string | null {
+  const hasFreshUatEvidence = params.checks.some((check) =>
+    (check.evidence ?? []).some((evidence) => evidence.kind === "gsd_uat_exec")
+  );
+  return hasFreshUatEvidence
+    ? null
+    : "UAT Assessment requires at least one fresh gsd_uat_exec evidence reference from run-uat";
 }
 
 function validateUatMode(params: UatResultSaveParams): string | null {
@@ -1314,15 +1386,30 @@ export async function executeUatResultSave(
   params: UatResultSaveParams,
   basePath: string = process.cwd(),
 ): Promise<ToolExecutionResult> {
+  const unitGuard = blockIfWrongAutoUnit("run-uat", "save_uat_result");
+  if (unitGuard) return unitGuard;
+
+  // Phase 1: normalize verdict and supply the canonical presentation when none was provided.
+  params = normalizeUatVerdict(params);
+  params = supplyDefaultPresentation(params);
+
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) return errorResult("save_uat_result", "GSD database is not available.", "db_unavailable");
 
+  // Phase 2: validate the submitted presentation before the canonical merge so that
+  // presentations missing required workflow tools are rejected rather than silently patched.
   const requiredError = ensureUatRequiredFields(params);
   if (requiredError) return errorResult("save_uat_result", requiredError, "invalid_params");
   const presentationError = validateCanonicalPresentation(params);
   if (presentationError) return errorResult("save_uat_result", presentationError, "alias_tool_name");
+
+  // Phase 3: merge in the canonical plan ID and read-only audit tools so the persisted
+  // artifact always carries the full audit surface even when the provider omitted them.
+  params = mergeCanonicalPresentation(params);
   const checkError = validateUatChecks(basePath, params);
   if (checkError) return errorResult("save_uat_result", checkError, "invalid_evidence");
+  const freshEvidenceError = validateFreshUatOwnedEvidence(params);
+  if (freshEvidenceError) return errorResult("save_uat_result", freshEvidenceError, "missing_fresh_uat_evidence");
   const modeError = validateUatMode(params);
   if (modeError) return errorResult("save_uat_result", modeError, "uat_mode_mismatch");
 
