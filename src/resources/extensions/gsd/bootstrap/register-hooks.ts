@@ -17,7 +17,17 @@ import { canonicalToolName, clearDiscussionFlowState, isDepthConfirmationAnswer,
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
-import { clearToolInvocationError, getAutoRuntimeSnapshot, isAutoActive, isAutoCompletionStopInProgress, isAutoPaused, markToolEnd, markToolStart, recordToolInvocationError } from "../auto-runtime-state.js";
+import {
+  clearToolInvocationError,
+  getAutoRuntimeSnapshot,
+  getSourceObservationStore,
+  isAutoActive,
+  isAutoCompletionStopInProgress,
+  isAutoPaused,
+  markToolEnd,
+  markToolStart,
+  recordToolInvocationError,
+} from "../auto-runtime-state.js";
 
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { maybePauseAutoForApprovalGate, resetPendingGatePauseGuard } from "./pending-gate-pause.js";
@@ -39,6 +49,7 @@ import { registerPlanMilestoneSchemaRecovery } from "./plan-milestone-schema-rec
 import { AUTO_UNIT_SCOPED_TOOLS, RUN_UAT_BROWSER_TOOL_NAMES, isWorkflowAliasTool } from "../auto-unit-tool-scope.js";
 import { filterToolsForProvider } from "../model-router.js";
 import { RUN_UAT_READ_ONLY_TOOL_NAMES, RUN_UAT_WORKFLOW_TOOL_NAMES } from "../tool-presentation-plan.js";
+import { injectSourceContextBlockIntoPayload, supportsSourceObservationsForUnit } from "../source-observations.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -472,6 +483,55 @@ function deferApprovalGate(gateId: string, basePath: string): void {
 
 function contextBasePath(ctx?: { cwd?: string }): string {
   return typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd();
+}
+
+function beginSourceObservationStoreForCurrentUnit(
+  ctx?: { cwd?: string },
+): ReturnType<typeof getSourceObservationStore> | null {
+  if (!isAutoActive()) return null;
+  const dash = getAutoRuntimeSnapshot();
+  if (!dash.currentUnit) return null;
+  if (!supportsSourceObservationsForUnit(dash.currentUnit.type)) return null;
+
+  const store = getSourceObservationStore();
+  store.beginUnit({
+    unitType: dash.currentUnit.type,
+    unitId: dash.currentUnit.id,
+    startedAt: dash.currentUnit.startedAt,
+    basePath: dash.currentUnit.workspaceRoot ?? (dash.basePath || contextBasePath(ctx)),
+  });
+  return store;
+}
+
+function refreshSourceObservationAfterMutation(
+  canonicalName: string,
+  input: unknown,
+  ctx?: { cwd?: string },
+): void {
+  if (canonicalName !== "edit" && canonicalName !== "write") return;
+  if (!input || typeof input !== "object") return;
+
+  const store = beginSourceObservationStoreForCurrentUnit(ctx);
+  if (!store) return;
+  store.observeMutation(input as { path?: unknown; file_path?: unknown });
+}
+
+function clearSourceObservationsAfterShell(
+  canonicalName: string,
+): void {
+  if (!isAutoActive()) return;
+  if (!isShellExecutionTool(canonicalName)) return;
+  const dash = getAutoRuntimeSnapshot();
+  if (!dash.currentUnit || !supportsSourceObservationsForUnit(dash.currentUnit.type)) return;
+  getSourceObservationStore().clear();
+}
+
+function isShellExecutionTool(canonicalName: string): boolean {
+  return canonicalName === "bash" ||
+    canonicalName === "bg_shell" ||
+    canonicalName === "async_bash" ||
+    canonicalName === "shell" ||
+    canonicalName === "powershell";
 }
 
 function activateDeferredApprovalGate(basePath: string): void {
@@ -1232,6 +1292,17 @@ export function registerHooks(
     if (isAutoActive() && typeof event.toolCallId === "string") {
       markToolEnd(event.toolCallId);
     }
+    const toolName = canonicalToolName(event.toolName);
+    if (isAutoActive() && toolName === "read" && !event.isError) {
+      const store = beginSourceObservationStoreForCurrentUnit(ctx);
+      if (store) {
+        store.observeRead(event.input);
+      }
+    }
+    if (!event.isError) {
+      refreshSourceObservationAfterMutation(toolName, event.input, ctx);
+      clearSourceObservationsAfterShell(toolName);
+    }
     if (isAutoActive() && event.isError) {
       const resultPayload = ("result" in event ? event.result : undefined) as any;
       const errorText = typeof resultPayload === "string"
@@ -1247,7 +1318,6 @@ export function registerHooks(
     } else if (isAutoActive()) {
       clearToolInvocationError();
     }
-    const toolName = canonicalToolName(event.toolName);
     if (toolName !== "ask_user_questions") return;
     const basePath = contextBasePath(ctx);
     const milestoneId = await getDiscussionMilestoneIdFor(basePath);
@@ -1423,6 +1493,16 @@ export function registerHooks(
       const input = payload.input;
       if (Array.isArray(input)) {
         payload.input = truncateResponsesInputResultItems(input as any, maxChars);
+      }
+    } catch { /* non-fatal */ }
+
+    try {
+      if (isAutoActive()) {
+        const sourceContextBlock = getSourceObservationStore().renderActiveBlock();
+        if (sourceContextBlock) {
+          const nextPayload = injectSourceContextBlockIntoPayload(payload, sourceContextBlock);
+          Object.assign(payload, nextPayload);
+        }
       }
     } catch { /* non-fatal */ }
 

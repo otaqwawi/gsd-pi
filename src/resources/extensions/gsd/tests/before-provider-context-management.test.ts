@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { _setAutoActiveForTest } from "../auto.ts";
+import { autoSession } from "../auto-runtime-state.js";
 import { registerHooks } from "../bootstrap/register-hooks.ts";
 
 type HookHandler = (event: any, ctx?: any) => Promise<any> | any;
@@ -95,4 +96,50 @@ test("before_provider_request truncates tool results outside auto-mode", async (
   assert.ok(truncatedResponsesOutput.length < responsesOutput.length);
   assert.doesNotMatch(truncatedMessage, /result masked/);
   assert.doesNotMatch(truncatedResponsesOutput, /result masked/);
+});
+
+test("successful shell result clears source context before provider injection", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-before-provider-source-"));
+  const project = join(dir, "project");
+  mkdirSync(project, { recursive: true });
+  writeFileSync(join(project, "app.ts"), "export const value = 'before';\n");
+
+  autoSession.reset();
+  autoSession.active = true;
+  autoSession.basePath = project;
+  autoSession.setCurrentUnit({
+    type: "execute-task",
+    id: "M001/S01/T01",
+    startedAt: 123,
+    workspaceRoot: project,
+  });
+  autoSession.sourceObservations.observeRead({ path: "app.ts" });
+
+  t.after(() => {
+    autoSession.reset();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  assert.match(autoSession.sourceObservations.renderActiveBlock() ?? "", /before/);
+
+  const handlers = createHookHandlers();
+  const toolResult = requireHook(handlers, "tool_result");
+  const beforeProviderRequest = requireHook(handlers, "before_provider_request");
+
+  await toolResult({
+    toolCallId: "toolu_bash",
+    toolName: "bash",
+    input: { command: "printf after > app.ts" },
+    isError: false,
+    result: "ok",
+  }, { cwd: project });
+
+  const payload = {
+    messages: [{ role: "user", content: [{ type: "text", text: "continue" }] }],
+  };
+  await beforeProviderRequest({ payload });
+
+  assert.equal(autoSession.sourceObservations.renderActiveBlock(), null);
+  assert.equal(payload.messages.length, 1);
+  assert.doesNotMatch(payload.messages[0].content[0].text, /Source Context Block/);
 });
