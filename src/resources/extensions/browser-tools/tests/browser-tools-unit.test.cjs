@@ -503,6 +503,29 @@ describe("state accessors", () => {
 		);
 	});
 
+	it("session artifact dir is recomputed when artifact root changes", async (t) => {
+		const root1 = mkdtempSync(join(tmpdir(), "browser-tools-root1-"));
+		const root2 = mkdtempSync(join(tmpdir(), "browser-tools-root2-"));
+		t.after(() => {
+			rmSync(root1, { recursive: true, force: true });
+			rmSync(root2, { recursive: true, force: true });
+		});
+
+		resetAllState();
+		setArtifactRootForCwd(root1);
+		const sessionDir1 = await ensureSessionArtifactDir();
+		assert.ok(sessionDir1.startsWith(join(root1, ".artifacts", "browser")));
+
+		// Change the root — cached session dir must be invalidated
+		setArtifactRootForCwd(root2);
+		const sessionDir2 = await ensureSessionArtifactDir();
+		assert.ok(
+			sessionDir2.startsWith(join(root2, ".artifacts", "browser")),
+			`session dir should be under new root after root change: ${sessionDir2}`,
+		);
+		assert.notEqual(sessionDir1, sessionDir2, "session dir must differ after root change");
+	});
+
 	it("setCurrentRefMap/getCurrentRefMap round-trip", () => {
 		assert.deepStrictEqual(getCurrentRefMap(), {});
 		const refMap = { e1: { ref: "e1", tag: "button" } };

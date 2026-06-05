@@ -190,7 +190,11 @@ export interface BrowserAssertionCheckInput {
 let _artifactRoot = ARTIFACT_ROOT;
 export function getArtifactRoot(): string { return _artifactRoot; }
 export function setArtifactRootForCwd(cwd: string): string {
-	_artifactRoot = path.resolve(cwd, ".artifacts", "browser");
+	const newRoot = path.resolve(cwd, ".artifacts", "browser");
+	if (newRoot !== _artifactRoot) {
+		_artifactRoot = newRoot;
+		_sessionArtifactDir = null;
+	}
 	return _artifactRoot;
 }
 
