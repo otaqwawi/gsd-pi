@@ -45,11 +45,20 @@ interface ActiveSourceObservationSet {
 }
 
 const SOURCE_CONTEXT_TITLE = "## Source Context Block";
+const SOURCE_OBSERVATION_UNIT_TYPE = "execute-task";
+
+export function supportsSourceObservationsForUnit(unitType: string): boolean {
+  return unitType === SOURCE_OBSERVATION_UNIT_TYPE;
+}
 
 export class SourceObservationStore {
   private active: ActiveSourceObservationSet | null = null;
 
   beginUnit(unit: SourceObservationUnit): void {
+    if (!supportsSourceObservationsForUnit(unit.unitType)) {
+      this.clear();
+      return;
+    }
     if (this.matches(unit)) return;
     this.active = { unit: { ...unit }, observations: new Map() };
   }
@@ -93,6 +102,7 @@ export class SourceObservationStore {
 
   renderActiveBlock(): string | null {
     if (!this.active || this.active.observations.size === 0) return null;
+    if (!supportsSourceObservationsForUnit(this.active.unit.unitType)) return null;
     const observations = [...this.active.observations.values()]
       .sort((a, b) => a.path.localeCompare(b.path));
     const lines = [
@@ -185,8 +195,13 @@ export function observeSourcePath(
     return unavailable(displayPath, null, "directory", source, "directory selectors are not whole files");
   }
 
-  const absolutePath = isAbsolute(normalizedRaw) ? normalizedRaw : resolve(basePath, normalizedRaw);
-  const path = formatObservationPath(basePath, absolutePath, displayPath);
+  const rootPath = resolve(basePath);
+  const absolutePath = isAbsolute(normalizedRaw) ? resolve(normalizedRaw) : resolve(rootPath, normalizedRaw);
+  const path = formatObservationPath(rootPath, absolutePath, displayPath);
+
+  if (!isPathInsideRoot(rootPath, absolutePath)) {
+    return unavailable(displayPath, absolutePath, "unresolved selector", source, "path is outside active Unit root");
+  }
 
   if (!existsSync(absolutePath)) {
     return unavailable(path, absolutePath, "missing", source, "file does not exist in the active Unit root");
@@ -294,6 +309,11 @@ function formatObservationPath(basePath: string, absolutePath: string, fallback:
     return rel.split(sep).join("/");
   }
   return fallback;
+}
+
+function isPathInsideRoot(rootPath: string, absolutePath: string): boolean {
+  const rel = relative(rootPath, absolutePath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 function containsGlobPattern(candidate: string): boolean {

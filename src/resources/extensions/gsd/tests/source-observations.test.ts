@@ -160,6 +160,36 @@ test("over-threshold files are explicit unavailable observations", () => {
   assert.match(observation.reason ?? "", /exceeds/);
 });
 
+test("outside-root paths are unavailable and never inlined", () => {
+  const root = tempProject();
+  const basePath = join(root, "project");
+  const outsidePath = join(root, "outside");
+  mkdirSync(basePath, { recursive: true });
+  mkdirSync(outsidePath, { recursive: true });
+  writeFileSync(join(outsidePath, "secret.txt"), "do not inline me\n");
+
+  const absoluteObservation = observeSourcePath(basePath, join(outsidePath, "secret.txt"), "read");
+  const relativeObservation = observeSourcePath(basePath, "../outside/secret.txt", "read");
+
+  assert.equal(absoluteObservation.status, "unresolved selector");
+  assert.equal(relativeObservation.status, "unresolved selector");
+  assert.match(absoluteObservation.reason ?? "", /outside active Unit root/);
+  assert.match(relativeObservation.reason ?? "", /outside active Unit root/);
+  assert.equal(absoluteObservation.text, undefined);
+  assert.equal(relativeObservation.text, undefined);
+});
+
+test("source observations only render for execute-task units", () => {
+  const basePath = tempProject();
+  writeFileSync(join(basePath, "plan.md"), "planning context\n");
+
+  const store = new SourceObservationStore();
+  store.beginUnit({ unitType: "plan-slice", unitId: "M001/S01", startedAt: 123, basePath });
+  store.observeRead({ path: "plan.md" });
+
+  assert.equal(store.renderActiveBlock(), null);
+});
+
 test("source context block injection survives tool-result truncation for messages payloads", () => {
   const payload = {
     messages: truncateContextResultMessages([
@@ -215,6 +245,31 @@ test("AutoSession current-unit clear removes active source observations", () => 
   assert.match(session.sourceObservations.renderActiveBlock() ?? "", /export const value = 1/);
 
   session.clearCurrentUnit();
+
+  assert.equal(session.sourceObservations.renderActiveBlock(), null);
+});
+
+test("AutoSession clears source observations when switching to non-execute units", () => {
+  const basePath = tempProject();
+  writeFileSync(join(basePath, "app.ts"), "export const value = 1;");
+  const session = new AutoSession();
+  session.basePath = basePath;
+  session.setCurrentUnit({
+    type: "execute-task",
+    id: "M001/S01/T01",
+    startedAt: 123,
+    workspaceRoot: basePath,
+  });
+  session.sourceObservations.observeRead({ path: "app.ts" });
+
+  assert.match(session.sourceObservations.renderActiveBlock() ?? "", /export const value = 1/);
+
+  session.setCurrentUnit({
+    type: "plan-slice",
+    id: "M001/S01",
+    startedAt: 124,
+    workspaceRoot: basePath,
+  });
 
   assert.equal(session.sourceObservations.renderActiveBlock(), null);
 });

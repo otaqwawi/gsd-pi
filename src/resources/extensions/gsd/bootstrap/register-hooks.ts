@@ -49,7 +49,7 @@ import { registerPlanMilestoneSchemaRecovery } from "./plan-milestone-schema-rec
 import { AUTO_UNIT_SCOPED_TOOLS, RUN_UAT_BROWSER_TOOL_NAMES, isWorkflowAliasTool } from "../auto-unit-tool-scope.js";
 import { filterToolsForProvider } from "../model-router.js";
 import { RUN_UAT_READ_ONLY_TOOL_NAMES, RUN_UAT_WORKFLOW_TOOL_NAMES } from "../tool-presentation-plan.js";
-import { injectSourceContextBlockIntoPayload } from "../source-observations.js";
+import { injectSourceContextBlockIntoPayload, supportsSourceObservationsForUnit } from "../source-observations.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -491,6 +491,7 @@ function beginSourceObservationStoreForCurrentUnit(
   if (!isAutoActive()) return null;
   const dash = getAutoRuntimeSnapshot();
   if (!dash.currentUnit) return null;
+  if (!supportsSourceObservationsForUnit(dash.currentUnit.type)) return null;
 
   const store = getSourceObservationStore();
   store.beginUnit({
@@ -513,6 +514,24 @@ function refreshSourceObservationAfterMutation(
   const store = beginSourceObservationStoreForCurrentUnit(ctx);
   if (!store) return;
   store.observeMutation(input as { path?: unknown; file_path?: unknown });
+}
+
+function clearSourceObservationsAfterShell(
+  canonicalName: string,
+): void {
+  if (!isAutoActive()) return;
+  if (!isShellExecutionTool(canonicalName)) return;
+  const dash = getAutoRuntimeSnapshot();
+  if (!dash.currentUnit || !supportsSourceObservationsForUnit(dash.currentUnit.type)) return;
+  getSourceObservationStore().clear();
+}
+
+function isShellExecutionTool(canonicalName: string): boolean {
+  return canonicalName === "bash" ||
+    canonicalName === "bg_shell" ||
+    canonicalName === "async_bash" ||
+    canonicalName === "shell" ||
+    canonicalName === "powershell";
 }
 
 function activateDeferredApprovalGate(basePath: string): void {
@@ -1282,6 +1301,7 @@ export function registerHooks(
     }
     if (!event.isError) {
       refreshSourceObservationAfterMutation(toolName, event.input, ctx);
+      clearSourceObservationsAfterShell(toolName);
     }
     if (isAutoActive() && event.isError) {
       const resultPayload = ("result" in event ? event.result : undefined) as any;
