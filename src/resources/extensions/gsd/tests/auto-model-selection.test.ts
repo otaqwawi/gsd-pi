@@ -718,6 +718,63 @@ test("selectAndApplyModel applies an explicit per-phase thinking level (ADR-026)
   assert.deepEqual(thinkingLevels, ["xhigh"]);
 });
 
+test("selectAndApplyModel applies explicit thinking with no model pin (interactive, ADR-026)", async (t) => {
+  const originalCwd = process.cwd();
+  const tempProject = makeTempDir("gsd-routing-thinking-nomodel-");
+  const thinkingLevels: unknown[] = [];
+  t.after(() => {
+    process.chdir(originalCwd);
+    rmSync(tempProject, { recursive: true, force: true });
+  });
+
+  const model = {
+    id: "claude-sonnet-4-6",
+    provider: "anthropic",
+    api: "anthropic-messages",
+    reasoning: true,
+    thinkingLevelMap: { low: "low", medium: "medium", high: "high", xhigh: "xhigh" },
+  };
+  mkdirSync(join(tempProject, ".gsd"), { recursive: true });
+  // A `thinking:` block with NO models config — the interactive guided-flow
+  // scenario the bug report flagged (no per-phase model, no start model).
+  writeFileSync(
+    join(tempProject, ".gsd", "PREFERENCES.md"),
+    ["---", "thinking:", "  planning: high", "---"].join("\n"),
+    "utf-8",
+  );
+  process.chdir(tempProject);
+
+  await selectAndApplyModel(
+    {
+      modelRegistry: { getAvailable: () => [model] },
+      sessionManager: { getSessionId: () => "test-session" },
+      ui: { notify: () => {} },
+      model: { provider: "anthropic", id: "claude-sonnet-4-6", api: "anthropic-messages" },
+    } as any,
+    {
+      setModel: async () => true,
+      setThinkingLevel: (level: unknown) => { thinkingLevels.push(level); },
+      emitBeforeModelSelect: async () => undefined,
+      getActiveTools: () => [],
+      emitAdjustToolSet: async () => undefined,
+      setActiveTools: () => {},
+    } as any,
+    "plan-slice",
+    "M001/S01",
+    tempProject,
+    undefined,
+    false,
+    null,            // no autoModeStartModel
+    undefined,
+    false,           // isAutoMode = false (interactive)
+    undefined,
+    undefined,       // no captured session thinking level
+  );
+
+  // No model branch runs, but the explicit block thinking must still apply.
+  assert.deepEqual(thinkingLevels, ["high"]);
+});
+
 test("resolveModelId: anthropic wins over claude-code when session provider is not claude-code", () => {
   const availableModels = [
     { id: "claude-sonnet-4-6", provider: "claude-code" },

@@ -403,10 +403,11 @@ export function validatePreferences(preferences: GSDPreferences): {
   // ─── Models ─────────────────────────────────────────────────────────
   if (preferences.models !== undefined) {
     if (preferences.models && typeof preferences.models === "object") {
-      validated.models = preferences.models;
       // Static check for inline per-phase thinking (ADR-026). The resolved
       // model isn't known until dispatch, so capability is clamped there; here
-      // we only warn on illegal level strings so a typo is surfaced at load.
+      // we warn on illegal level strings AND strip them, so a typo can't reach
+      // resolveThinkingLevelForUnit and be treated as explicit configuration.
+      const sanitizedModels: Record<string, unknown> = {};
       for (const [phase, entry] of Object.entries(preferences.models as Record<string, unknown>)) {
         if (entry && typeof entry === "object" && "thinking" in entry) {
           const level = (entry as { thinking?: unknown }).thinking;
@@ -415,9 +416,14 @@ export function validatePreferences(preferences: GSDPreferences): {
               `models.${phase}.thinking "${String(level)}" is not a valid thinking level ` +
               `(off, minimal, low, medium, high, xhigh) — ignored`,
             );
+            const { thinking: _ignored, ...rest } = entry as Record<string, unknown>;
+            sanitizedModels[phase] = rest;
+            continue;
           }
         }
+        sanitizedModels[phase] = entry;
       }
+      validated.models = sanitizedModels as GSDPreferences["models"];
     } else {
       errors.push("models must be an object");
     }

@@ -109,7 +109,10 @@ function resolveWinningPhase(
   if (!models) return undefined;
   for (const key of chain) {
     const config = models[key];
-    if (config != null) return { phase: key, config };
+    // Falsy check (not `!= null`) so an empty-string model is treated as
+    // unconfigured and the chain falls through — matches the pre-refactor
+    // switch, which bailed via `if (!phaseConfig)`.
+    if (config) return { phase: key, config };
   }
   return undefined;
 }

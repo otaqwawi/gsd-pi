@@ -949,6 +949,26 @@ export async function selectAndApplyModel(
     }
   }
 
+  // If no model branch applied a thinking level (e.g. interactive guided-flow
+  // with a `thinking:` block but no per-phase model and no start model), still
+  // honor an explicitly configured phase thinking level against the current
+  // session model. Only the explicit path runs here — the floored session
+  // default is intentionally left untouched so no-config interactive runs keep
+  // the user's /model thinking level. (ADR-026)
+  if (appliedThinkingLevel == null && explicitThinkingLevel && ctx.model) {
+    const current = resolveModelId(
+      `${ctx.model.provider}/${ctx.model.id}`,
+      ctx.modelRegistry?.getAvailable?.() ?? [],
+      ctx.model.provider,
+    );
+    if (current) {
+      appliedThinkingLevel = applyThinkingLevelForModel(pi, explicitThinkingLevel, current, ctx);
+    } else {
+      pi.setThinkingLevel(explicitThinkingLevel);
+      appliedThinkingLevel = explicitThinkingLevel;
+    }
+  }
+
   return { routing, appliedModel, appliedThinkingLevel };
 }
 

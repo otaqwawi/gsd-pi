@@ -125,11 +125,29 @@ test("validation warns on an unknown phase key in the block", () => {
   assert.ok(result.warnings.some((w) => w.includes("unknown thinking phase") && w.includes("plannning")));
 });
 
-test("validation warns on an illegal inline models thinking level", () => {
+test("validation warns on AND strips an illegal inline models thinking level", () => {
   const result = validatePreferences({
     models: { planning: { model: "m", thinking: "max" } },
   } as never);
   assert.ok(result.warnings.some((w) => w.includes("models.planning.thinking") && w.includes("not a valid thinking level")));
+  // The bad thinking field must be stripped so it can't reach the resolver,
+  // while the rest of the model config survives.
+  const planning = (result.preferences.models as Record<string, { model?: string; thinking?: string }>).planning;
+  assert.equal(planning.thinking, undefined);
+  assert.equal(planning.model, "m");
+});
+
+test("an empty-string model is treated as unconfigured (no {primary: ''})", () => {
+  withPreferences(["models:", '  planning: ""'], () => {
+    assert.equal(resolveModelWithFallbacksForUnit("plan-milestone"), undefined);
+  });
+});
+
+test("an empty-string model falls through the sibling chain", () => {
+  withPreferences(["models:", '  discuss: ""', "  planning: planning-model"], () => {
+    // discuss is empty → chain falls through to planning.
+    assert.equal(resolveModelWithFallbacksForUnit("discuss-milestone")?.primary, "planning-model");
+  });
 });
 
 test("validation accepts a valid thinking block", () => {
