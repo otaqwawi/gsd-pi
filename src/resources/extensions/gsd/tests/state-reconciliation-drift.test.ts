@@ -761,6 +761,46 @@ test("ADR-017 (#5702): missing UAT.md clears stale full_uat_md from DB", async (
   );
 });
 
+test("ADR-017 (#5702): stale-render plan repair works with descriptor-layout milestone dir", async (t) => {
+  // Regression for bugbot finding: repairStaleRenderFromBasePath was passing the
+  // raw dir segment (e.g. M001-DESCRIPTOR) straight to renderPlanCheckboxes, which
+  // queries the DB as getSliceTasks("M001-DESCRIPTOR", …) → empty → throws.
+  // After the fix it calls canonicalizeMilestoneId() first.
+  const base = mkdtempSync(join(tmpdir(), "gsd-adr017-descriptor-"));
+  // Use a descriptor-style directory name (M001-DESCRIPTOR → DB milestone M001)
+  const milestoneDir = "M001-DESCRIPTOR";
+  const sliceDir = join(base, ".gsd", "milestones", milestoneDir, "slices", "S01");
+  mkdirSync(join(sliceDir, "tasks"), { recursive: true });
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmTreeQuiet(base);
+  });
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  clearRendererCaches();
+  // DB uses the canonical ID (M001), directory uses the descriptor name.
+  insertMilestone({ id: "M001", title: "Descriptor Test", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Task One", status: "done" });
+
+  const planPath = join(sliceDir, "S01-PLAN.md");
+  writeFileSync(planPath, makeStalePlanContent("S01", [
+    { id: "T01", title: "Task One", done: false },
+  ]));
+  clearRendererCaches();
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true, "reconcile should succeed with descriptor-layout milestone dir");
+  const renderRepaired = result.repaired.find((d) => d.kind === "stale-render");
+  assert.ok(renderRepaired, "stale-render drift should be repaired");
+  const repairedContent = readFileSync(planPath, "utf-8");
+  assert.match(repairedContent, /\[x\][^\n]*T01:/, "T01 checkbox should be checked after repair");
+});
+
 // ─── #5703: stale-worker drift ───────────────────────────────────────────────
 
 const DEAD_PID = 999_999_999; // far above any realistic system PID; process.kill(pid, 0) → ESRCH
