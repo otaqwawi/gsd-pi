@@ -24,3 +24,21 @@ test("lastAssistantText extracts the latest assistant text block content", () =>
   );
   assert.equal(lastAssistantText?.(null), "");
 });
+
+test("lastAssistantText includes thinking blocks so rate-limit notices are not dropped", () => {
+  const lastAssistantText = (userInputBoundary as {
+    lastAssistantText?: (messages: unknown[] | null | undefined) => string;
+  }).lastAssistantText;
+
+  assert.equal(typeof lastAssistantText, "function");
+  // Turn with only a thinking block (no text block) — must not return ""
+  const result = lastAssistantText?.([
+    {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "You've hit your limit · resets in 2h" },
+      ],
+    },
+  ]);
+  assert.ok(result?.includes("You've hit your limit"), `expected rate-limit text, got: ${JSON.stringify(result)}`);
+});

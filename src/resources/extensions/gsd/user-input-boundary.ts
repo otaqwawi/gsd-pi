@@ -31,9 +31,12 @@ function extractTextFromMessage(msg: unknown): string {
   const parts: string[] = [];
   for (const block of content) {
     if (!block || typeof block !== "object") continue;
-    const typed = block as { type?: unknown; text?: unknown };
+    const typed = block as { type?: unknown; text?: unknown; thinking?: unknown };
     if (typed.type === "text" && typeof typed.text === "string") {
       parts.push(typed.text);
+    }
+    if (typed.type === "thinking" && typeof typed.thinking === "string") {
+      parts.push(typed.thinking);
     }
   }
   return parts.join("\n");
