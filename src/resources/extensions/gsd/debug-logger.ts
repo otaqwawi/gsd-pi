@@ -132,6 +132,15 @@ export function debugCount(counter: keyof typeof _counters, value = 1): void {
   _counters[counter] += value;
 }
 
+/**
+ * Snapshot the current debug counters. Used by the per-dispatch benchmark
+ * harness (#442) to read counts without disabling debug (which is what
+ * writeDebugSummary does). Returns a copy so callers can't mutate internal state.
+ */
+export function getDebugCounters(): Readonly<typeof _counters> {
+  return { ..._counters };
+}
+
 /** Record a peak value (only updates if new value is higher). */
 export function debugPeak(counter: keyof typeof _counters, value: number): void {
   if (!_enabled) return;
