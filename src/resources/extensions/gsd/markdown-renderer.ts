@@ -13,7 +13,6 @@ import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";
 import { dirname, join, relative } from "node:path";
-import { createRequire } from "node:module";
 import {
   getAllMilestones,
   getMilestone,
@@ -39,6 +38,7 @@ import {
   buildSliceFileName,
 } from "./paths.js";
 import { saveFile, clearParseCache } from "./files.js";
+import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
 import { invalidateStateCache } from "./state.js";
 import { clearPathCache } from "./paths.js";
 import type { RiskLevel } from "./types.js";
@@ -739,19 +739,11 @@ export interface StaleEntry {
  * Logs to stderr when stale files are detected.
  */
 export function detectStaleRenders(basePath: string): StaleEntry[] {
-  // Lazy-load parsers — intentional disk-vs-DB comparison requires parsers
-  const _require = createRequire(import.meta.url);
-  let parseRoadmap: Function, parsePlan: Function;
-  try {
-    // Prefer compiled JS for packaged/runtime installs; TS exists only in source/dev contexts.
-    const m = _require("./parsers-legacy.js");
-    parseRoadmap = m.parseRoadmap; parsePlan = m.parsePlan;
-  } catch (e) {
-    logWarning("renderer", `parsers-legacy.js require failed, falling back to .ts: ${(e as Error).message}`);
-    const m = _require("./parsers-legacy.ts");
-    parseRoadmap = m.parseRoadmap; parsePlan = m.parsePlan;
-  }
-
+  // parseRoadmap/parsePlan are statically imported (#442 Phase 1.4): the
+  // per-call createRequire("./parsers-legacy") that used to live here ran on
+  // every dispatch. The static `./parsers-legacy.js` specifier resolves in
+  // both packaged (.js) and source (.ts via the strip-types loader) contexts —
+  // the same form a dozen other modules already use.
   const stale: StaleEntry[] = [];
   const milestones = getAllMilestones();
 
