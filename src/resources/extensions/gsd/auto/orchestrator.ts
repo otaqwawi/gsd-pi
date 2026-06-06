@@ -3,6 +3,7 @@
 
 import type { AutoAdvanceResult, AutoOrchestrationModule, AutoOrchestratorDeps, AutoSessionContext, AutoStatus } from "./contracts.js";
 import type { GSDState } from "../types.js";
+import { debugCount, debugTime } from "../debug-logger.js";
 
 function now(): number {
   return Date.now();
@@ -51,8 +52,14 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   }
 
   public async advance(): Promise<AutoAdvanceResult> {
+    // Phase 0.2 (#442): time the whole pre-dispatch pipeline across every
+    // return path (success, blocked/stopped/skipped early returns, catch).
+    // Pure wrapper — no logic change. No-op unless GSD_DEBUG is enabled.
+    debugCount("dispatches");
+    const stopTimer = debugTime("orchestrator-advance");
     try {
-      await this.deps.runtime.ensureLockOwnership();
+      try {
+        await this.deps.runtime.ensureLockOwnership();
 
       const staleMsg = this.deps.health.checkResourcesStale();
       if (staleMsg) {
@@ -338,6 +345,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       }
       await this.deps.health.postAdvanceRecord(result);
       return result;
+      }
+    } finally {
+      stopTimer();
     }
   }
 
