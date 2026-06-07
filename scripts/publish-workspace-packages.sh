@@ -23,9 +23,10 @@ cd "$ROOT"
 VERSION="$(node -p "require('./package.json').version")"
 TAG_FLAG="${TAG_FLAG:-}"
 
-mapfile -t PACKAGES < <(node scripts/lib/npm-release-packages.cjs --workspace-dirs)
+# Lines of "<name>:packages/<dir>" in dependency order.
+mapfile -t ENTRIES < <(node scripts/lib/npm-release-packages.cjs --workspace-dirs)
 
-if [ "${#PACKAGES[@]}" -eq 0 ]; then
+if [ "${#ENTRIES[@]}" -eq 0 ]; then
   echo "No publishable workspace packages found."
   exit 0
 fi
@@ -33,14 +34,19 @@ fi
 wait_for_workspace_package() {
   local package="$1"
   local delay=5
-  for attempt in $(seq 1 5); do
+  for attempt in $(seq 1 10); do
     if [ "$(npm view "${package}@${VERSION}" version 2>/dev/null || echo "")" = "${VERSION}" ]; then
       echo "  ✓ ${package}@${VERSION} visible on npm (attempt ${attempt})"
       return 0
     fi
-    if [ "${attempt}" = "5" ]; then
-      echo "::error::${package}@${VERSION} not visible on npm after 5 attempts"
-      exit 1
+    if [ "${attempt}" = "10" ]; then
+      # `npm publish` already confirmed registry acceptance ("+ pkg@version").
+      # Brand-new packages can lag significantly in read-after-write propagation,
+      # so a slow read MUST NOT abort the remaining publishes (that is exactly how
+      # later packages like mcp-server got left unpublished). Warn and continue;
+      # the verify-npm-release gate before the GitHub release is the real check.
+      echo "::warning::${package}@${VERSION} not yet visible on npm after ${attempt} attempts; publish was accepted, continuing."
+      return 0
     fi
     echo "  Attempt ${attempt}: ${package}@${VERSION} not visible yet, retrying in ${delay}s..."
     sleep "${delay}"
@@ -49,16 +55,31 @@ wait_for_workspace_package() {
   done
 }
 
-echo "Publishing ${#PACKAGES[@]} workspace package(s) at ${VERSION} (dependency order):"
-printf '  - %s\n' "${PACKAGES[@]}"
+echo "Publishing ${#ENTRIES[@]} workspace package(s) at ${VERSION} (dependency order):"
+printf '  - %s\n' "${ENTRIES[@]}"
 
-for workspace in "${PACKAGES[@]}"; do
+for entry in "${ENTRIES[@]}"; do
+  workspace="${entry%%:*}"
+  dir="${entry#*:}"
   if npm view "${workspace}@${VERSION}" version >/dev/null 2>&1; then
     echo "${workspace}@${VERSION} already published, skipping"
     continue
   fi
+  # Publish from the package's OWN directory. `npm publish --workspace` does NOT
+  # work here: the repo defines its workspace via pnpm-workspace.yaml and root
+  # package.json has no npm "workspaces" field, so npm reports "No workspaces
+  # found" and silently publishes nothing. prepack-resolve-workspace.cjs (run by
+  # the caller) has already rewritten internal workspace:* ranges to ^VERSION.
   # shellcheck disable=SC2086
-  npm publish --workspace "${workspace}" --ignore-scripts ${TAG_FLAG}
+  if OUTPUT=$( cd "${ROOT}/${dir}" && npm publish --ignore-scripts ${TAG_FLAG} 2>&1 ); then
+    echo "$OUTPUT"
+  elif echo "$OUTPUT" | grep -q "cannot publish over the previously published\|You cannot publish over"; then
+    echo "${workspace}@${VERSION} already published, skipping"
+    continue
+  else
+    echo "$OUTPUT"
+    exit 1
+  fi
   wait_for_workspace_package "${workspace}"
 done
 

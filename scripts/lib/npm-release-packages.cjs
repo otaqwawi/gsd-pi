@@ -120,10 +120,15 @@ module.exports = {
 };
 
 if (require.main === module) {
-  // `node scripts/lib/npm-release-packages.cjs [--names|--workspace-dirs]`
+  // `node scripts/lib/npm-release-packages.cjs [--workspace-dirs]`
+  // --workspace-dirs emits "<name>:packages/<dir>" lines in dependency order
+  // (consumed by scripts/publish-workspace-packages.sh, which publishes each
+  // package from its own directory). Default emits the full required name list.
   const arg = process.argv[2];
   if (arg === '--workspace-dirs') {
-    process.stdout.write(getOrderedWorkspacePublishList().map((p) => p.name).join('\n') + '\n');
+    process.stdout.write(
+      getOrderedWorkspacePublishList().map((p) => `${p.name}:packages/${p.dir}`).join('\n') + '\n',
+    );
   } else {
     process.stdout.write(getRequiredNpmPackageNames().join('\n') + '\n');
   }
