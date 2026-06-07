@@ -78,7 +78,7 @@ test("production publish plans the release and builds native artifacts in the sa
   assert.equal(plan.outputs.version, "${{ steps.release.outputs.version }}");
   assert.equal(plan.outputs.source_sha, "${{ steps.release.outputs.source_sha }}");
   assert.ok(
-    plan.steps.some((step) => step.uses === "actions/upload-artifact@v5"),
+    plan.steps.some((step) => step.uses === "actions/upload-artifact@v7"),
     "release metadata must be passed to the gated publish job",
   );
 
@@ -95,7 +95,7 @@ test("production publish plans the release and builds native artifacts in the sa
     ],
   );
   assert.ok(
-    nativeBuild.steps.some((step) => step.uses === "actions/upload-artifact@v5"),
+    nativeBuild.steps.some((step) => step.uses === "actions/upload-artifact@v7"),
     "native artifacts must be uploaded for the production release job",
   );
 });
