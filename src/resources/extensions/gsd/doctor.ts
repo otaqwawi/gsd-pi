@@ -337,7 +337,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       severity: diagnostic.severity,
       code: "invalid_preferences",
       scope: "project",
-      unitId: diagnostic.scope,
+      unitId: "project",
       message: `GSD preferences ${diagnostic.kind}: ${formatPreferenceDiagnosticDetail(diagnostic)}`,
       file: diagnostic.path,
       fixable: false,
