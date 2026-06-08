@@ -957,6 +957,51 @@ test("malformed project preferences do not override effective global wrapper", (
   );
 });
 
+test("malformed global preferences: loadEffectiveGSDPreferences returns null without project file", (t) => {
+  const originalCwd = process.cwd();
+  const originalGsdHome = process.env.GSD_HOME;
+  const tempProject = mkdtempSync(join(tmpdir(), "gsd-prefs-effective-malformed-global-"));
+  const tempGsdHome = mkdtempSync(join(tmpdir(), "gsd-prefs-effective-malformed-home-"));
+  t.after(() => {
+    process.chdir(originalCwd);
+    if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = originalGsdHome;
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempGsdHome, { recursive: true, force: true });
+    _resetParseWarningFlag();
+    _resetLogs();
+  });
+
+  process.env.GSD_HOME = tempGsdHome;
+  process.chdir(tempProject);
+  _resetParseWarningFlag();
+  _resetLogs();
+
+  const globalPath = getGlobalGSDPreferencesPath();
+  writeFileSync(
+    globalPath,
+    [
+      "---",
+      "version: 1",
+      "models:",
+      "  validation:",
+      "    openrouter/deepseek/deepseek-v4-pro",
+      "    thinking: high",
+      "---",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const globalPrefs = loadGlobalGSDPreferences();
+  assert.equal(globalPrefs?.ignored, true, "malformed global should be marked ignored");
+
+  // Symmetric with malformed project + no global: effective result should be null,
+  // not an effective object with ignored:true leaking through.
+  const loaded = loadEffectiveGSDPreferences(tempProject);
+  assert.equal(loaded, null, "effective preferences should be null when only global file is malformed");
+});
+
 // ── Experimental preferences ─────────────────────────────────────────────────
 
 test("experimental.rtk: true is accepted and stored", () => {

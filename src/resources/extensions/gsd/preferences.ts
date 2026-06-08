@@ -195,22 +195,23 @@ export function loadEffectiveGSDPreferences(
 ): LoadedGSDPreferences | null {
   const globalPreferences = loadGlobalGSDPreferences();
   const projectPreferences = loadProjectGSDPreferences(basePath);
+  const effectiveGlobalPreferences = globalPreferences?.ignored ? null : globalPreferences;
   const effectiveProjectPreferences = projectPreferences?.ignored ? null : projectPreferences;
   const projectHasPlanningDepth = effectiveProjectPreferences?.preferences.planning_depth !== undefined;
 
-  if (!globalPreferences && !effectiveProjectPreferences) return null;
+  if (!effectiveGlobalPreferences && !effectiveProjectPreferences) return null;
 
   let result: LoadedGSDPreferences;
-  if (!globalPreferences) {
+  if (!effectiveGlobalPreferences) {
     result = effectiveProjectPreferences!;
   } else if (!effectiveProjectPreferences) {
-    result = mergePreferenceMetadata(globalPreferences, projectPreferences);
+    result = mergePreferenceMetadata(effectiveGlobalPreferences, projectPreferences);
   } else {
-    const metadata = mergePreferenceMetadata(globalPreferences, effectiveProjectPreferences);
+    const metadata = mergePreferenceMetadata(effectiveGlobalPreferences, effectiveProjectPreferences);
     result = {
       path: effectiveProjectPreferences.path,
       scope: "project",
-      preferences: mergePreferences(globalPreferences.preferences, effectiveProjectPreferences.preferences),
+      preferences: mergePreferences(effectiveGlobalPreferences.preferences, effectiveProjectPreferences.preferences),
       ...(metadata.warnings ? { warnings: metadata.warnings } : {}),
       ...(metadata.diagnostics ? { diagnostics: metadata.diagnostics } : {}),
     };
