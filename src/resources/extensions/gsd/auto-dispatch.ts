@@ -112,9 +112,9 @@ import { runTurnGitAction } from "./git-service.js";
 import { parseUnitId } from "./unit-id.js";
 import { resolveExpectedArtifactPath } from "./auto-artifact-paths.js";
 import {
-  checkCloseoutConsistencyGate,
-  formatCloseoutConsistencyBlock,
-} from "./closeout-consistency-gate.js";
+  formatCloseoutProofBlock,
+  proveMilestoneCloseout,
+} from "./milestone-closeout-proof.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -1758,11 +1758,11 @@ export const DISPATCH_RULES: DispatchRule[] = [
           };
         }
         if (milestone) {
-          const closeoutGate = checkCloseoutConsistencyGate(mid, { refreshFromDisk: true });
-          if (!closeoutGate.ok) {
+          const closeoutProof = proveMilestoneCloseout(mid, { refreshFromDisk: true });
+          if (!closeoutProof.ok) {
             return {
               action: "stop",
-              reason: formatCloseoutConsistencyBlock(closeoutGate),
+              reason: formatCloseoutProofBlock(closeoutProof),
               level: "warning",
             };
           }

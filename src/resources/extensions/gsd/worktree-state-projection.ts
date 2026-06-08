@@ -442,11 +442,19 @@ export class WorktreeStateProjection {
    * any Unit dispatches.
    */
   projectRootToWorktree(scope: MilestoneScope): void {
-    _projectRootToWorktreeImpl(
+    this.projectRootToWorktreePaths(
       scope.workspace.projectRoot,
       scope.workspace.worktreeRoot ?? scope.workspace.projectRoot,
       scope.milestoneId,
     );
+  }
+
+  projectRootToWorktreePaths(
+    projectRoot: string,
+    worktreePath: string,
+    milestoneId: string | null,
+  ): void {
+    _projectRootToWorktreeImpl(projectRoot, worktreePath, milestoneId);
   }
 
   /**
@@ -454,11 +462,19 @@ export class WorktreeStateProjection {
    * Called by the post-unit pipeline between Units.
    */
   projectWorktreeToRoot(scope: MilestoneScope): void {
-    _projectWorktreeToRootImpl(
+    this.projectWorktreeToRootPaths(
       scope.workspace.worktreeRoot ?? scope.workspace.projectRoot,
       scope.workspace.projectRoot,
       scope.milestoneId,
     );
+  }
+
+  projectWorktreeToRootPaths(
+    worktreePath: string,
+    projectRoot: string,
+    milestoneId: string | null,
+  ): void {
+    _projectWorktreeToRootImpl(worktreePath, projectRoot, milestoneId);
   }
 
   /**
@@ -471,10 +487,18 @@ export class WorktreeStateProjection {
    * telemetry on what crossed the boundary.
    */
   finalizeProjectionForMerge(scope: MilestoneScope): { synced: string[] } {
-    return _finalizeProjectionForMergeImpl(
+    return this.finalizeProjectionForMergePaths(
       scope.workspace.projectRoot,
       scope.workspace.worktreeRoot ?? scope.workspace.projectRoot,
       scope.milestoneId,
     );
+  }
+
+  finalizeProjectionForMergePaths(
+    projectRoot: string,
+    worktreePath: string,
+    milestoneId: string,
+  ): { synced: string[] } {
+    return _finalizeProjectionForMergeImpl(projectRoot, worktreePath, milestoneId);
   }
 }

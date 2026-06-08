@@ -10,13 +10,13 @@ import { parseRoadmap } from "./parsers-legacy.js";
 import { resolveMilestoneFile } from "./paths.js";
 import { getMilestone, getMilestoneSlices, isDbAvailable } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
-import { verifyExpectedArtifact } from "./auto-recovery.js";
 import { runSafely } from "./auto-utils.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
 import { logWarning } from "./workflow-logger.js";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
 import { buildCompleteMilestonePrompt } from "./auto-prompts.js";
-import { checkCloseoutConsistencyGate } from "./closeout-consistency-gate.js";
+import { proveMilestoneCloseout } from "./milestone-closeout-proof.js";
+import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import type { DispatchAction, DispatchContext } from "./auto-dispatch.js";
 import {
   commitPendingMilestoneCloseoutChanges,
@@ -38,8 +38,16 @@ export async function isMilestoneCloseoutSettled(mid: string, basePath: string):
     if (isDbAvailable()) {
       const milestone = getMilestone(mid);
       if (milestone && isClosedStatus(milestone.status)) {
-        const closeoutGate = checkCloseoutConsistencyGate(mid, { refreshFromDisk: true });
-        if (closeoutGate.ok && verifyExpectedArtifact("complete-milestone", mid, basePath)) {
+        const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, mid);
+        const closeoutProof = proveMilestoneCloseout(mid, {
+          refreshFromDisk: true,
+          summaryArtifactBasePath: artifactBasePath,
+          implementationEvidence: {
+            basePath,
+            requirement: "not-absent",
+          },
+        });
+        if (closeoutProof.ok) {
           return true;
         }
       }

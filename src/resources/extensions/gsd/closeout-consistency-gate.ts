@@ -39,6 +39,7 @@ export type CloseoutConsistencyResult =
 
 export interface CloseoutConsistencyOptions {
   refreshFromDisk?: boolean;
+  allowOpenMilestone?: boolean;
 }
 
 function blocked(reason: CloseoutConsistencyFailureReason, message: string): CloseoutConsistencyResult {
@@ -79,7 +80,7 @@ export function checkCloseoutConsistencyGate(
       `Closeout consistency blocked for ${milestoneId}: milestone is missing from canonical DB.`,
     );
   }
-  if (!isClosedStatus(milestone.status)) {
+  if (!isClosedStatus(milestone.status) && !options.allowOpenMilestone) {
     return blocked(
       "milestone-open",
       `Closeout consistency blocked for ${milestoneId}: canonical DB milestone status is "${milestone.status}".`,

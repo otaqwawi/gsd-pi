@@ -79,6 +79,7 @@ import {
   teardownAutoWorktree,
 } from "./auto-worktree.js";
 import { resolveRoadmapForMilestoneMerge } from "./milestone-merge-roadmap.js";
+import type { MilestoneMergeTransactionRunner } from "./milestone-merge-transaction.js";
 
 const recentWorktreeMergeFailures = new Map<string, number>();
 const MERGE_FAILURE_DEDUPE_MS = 60_000;
@@ -147,25 +148,15 @@ export interface WorktreeLifecycleDeps {
    */
   worktreeProjection: WorktreeStateProjection;
 
-  // ── Merge primitive ──────────────────────────────────────────────────
+  // ── Merge transaction ────────────────────────────────────────────────
   /**
-   * Inner squash-merge primitive (`auto-worktree.ts:mergeMilestoneToMain`).
+   * Milestone Merge Transaction Module runner.
    *
-   * **Module-internal seam — do not construct your own.** Only the wiring
-   * factory `auto.ts:buildWorktreeLifecycleDeps()` is permitted to populate
-   * this field. The primitive is `@internal`; production callers reach the
-   * merge body through `WorktreeLifecycle.exitMilestone({ merge: true })`,
-   * never by calling this dep directly.
+   * The field name is preserved for existing test fixtures, but production
+   * wiring now supplies the named transaction wrapper rather than the raw
+   * squash-merge primitive directly.
    */
-  mergeMilestoneToMain: (
-    basePath: string,
-    milestoneId: string,
-    roadmapContent: string,
-  ) => {
-    pushed: boolean;
-    codeFilesChanged: boolean;
-    commitMessage?: string;
-  };
+  mergeMilestoneToMain: MilestoneMergeTransactionRunner;
 
   // ADR-016 phase 2 / C1 + C2 + C3 + C4 inlined the following fields as
   // direct imports — leaf primitives that did not vary across callers:

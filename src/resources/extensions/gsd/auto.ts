@@ -185,6 +185,7 @@ import {
 } from "./auto-worktree.js";
 import { pruneQueueOrder } from "./queue-order.js";
 import { startCommandPolling as _startCommandPolling, isRemoteConfigured } from "../remote-questions/manager.js";
+import { createMilestoneMergeTransaction } from "./milestone-merge-transaction.js";
 
 import { debugLog, isDebugEnabled, writeDebugSummary } from "./debug-logger.js";
 import {
@@ -2144,7 +2145,7 @@ export function buildWorktreeLifecycleDeps(): WorktreeLifecycleDeps {
   //   C4 (#5627) — GitServiceImpl constructor → gitServiceFactory
   //
   // Final WorktreeLifecycleDeps shape: 3 fields (gitServiceFactory,
-  // worktreeProjection, mergeMilestoneToMain). Down from 18 at slice-7
+  // worktreeProjection, mergeMilestoneToMain transaction runner). Down from 18 at slice-7
   // closure.
   return {
     gitServiceFactory: (basePath: string) => {
@@ -2153,7 +2154,7 @@ export function buildWorktreeLifecycleDeps(): WorktreeLifecycleDeps {
       return new GitServiceImpl(basePath, gitConfig);
     },
     worktreeProjection: new WorktreeStateProjection(),
-    mergeMilestoneToMain,
+    mergeMilestoneToMain: createMilestoneMergeTransaction(mergeMilestoneToMain),
   };
 }
 

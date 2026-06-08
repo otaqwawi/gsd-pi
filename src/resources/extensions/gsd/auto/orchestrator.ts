@@ -46,6 +46,7 @@ import { getPriorSliceCompletionBlocker } from "../dispatch-guard.js";
 import { GitServiceImpl } from "../git-service.js";
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import { WorktreeLifecycle } from "../worktree-lifecycle.js";
+import { createMilestoneMergeTransaction } from "../milestone-merge-transaction.js";
 import { createWorkspace, scopeMilestone } from "../workspace.js";
 import { supportsStructuredQuestions } from "../workflow-mcp.js";
 import { getRegisteredToolSnapshot, getToolBaselineSnapshot } from "../auto-model-selection.js";
@@ -586,7 +587,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         return new GitServiceImpl(basePath, gitConfig);
       },
       worktreeProjection: new WorktreeStateProjection(),
-      mergeMilestoneToMain,
+      mergeMilestoneToMain: createMilestoneMergeTransaction(mergeMilestoneToMain),
     });
   }
 
