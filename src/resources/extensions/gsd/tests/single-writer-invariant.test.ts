@@ -74,6 +74,29 @@ const PREPARE_WRITE_RE = /\.prepare\s*\(\s*[`'"][^`'"]*\b(INSERT|UPDATE|DELETE|R
 
 // Match .exec("... INSERT|UPDATE|DELETE|REPLACE ...") or raw BEGIN/COMMIT/ROLLBACK.
 const EXEC_WRITE_RE = /\.exec\s*\(\s*[`'"][^`'"]*\b(INSERT|UPDATE|DELETE|REPLACE|BEGIN|COMMIT|ROLLBACK)\b/i;
+const DB_WORKSPACE_MECHANICS = new Set([
+  "backupDatabaseSnapshot",
+  "checkpointDatabase",
+  "closeAllDatabases",
+  "closeDatabase",
+  "closeDatabaseByWorkspace",
+  "getDbPath",
+  "getDbProvider",
+  "getDbStatus",
+  "openDatabase",
+  "openDatabaseByScope",
+  "openDatabaseByWorkspace",
+  "refreshOpenDatabaseFromDisk",
+  "vacuumDatabase",
+  "wasDbOpenAttempted",
+]);
+
+function importNames(specifierBlock: string): string[] {
+  return specifierBlock
+    .split(",")
+    .map((name) => name.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]?.trim() ?? "")
+    .filter(Boolean);
+}
 
 test("no module outside gsd-db.ts issues raw write SQL against the engine DB", () => {
   const files = walkTsFiles(gsdDir);
@@ -166,6 +189,84 @@ test("gsd-db.ts exports the expected single-writer wrappers", async () => {
   }
 });
 
+test("DB Workspace Interface owns database open-state and maintenance calls", async () => {
+  const workspaceDb = await import("../db-workspace.js");
+
+  const expected = [
+    "backupWorkflowDatabaseSnapshot",
+    "checkpointWorkflowDatabase",
+    "closeAllWorkflowDatabases",
+    "closeWorkflowDatabase",
+    "closeWorkflowDatabaseByWorkspace",
+    "getWorkflowDatabasePath",
+    "getWorkflowDatabaseProvider",
+    "getWorkflowDatabaseStatus",
+    "isWorkflowDatabaseOpen",
+    "openExistingWorkflowDatabase",
+    "openWorkflowDatabase",
+    "openWorkflowDatabaseByScope",
+    "openWorkflowDatabaseByWorkspace",
+    "openWorkflowDatabasePath",
+    "refreshWorkflowDatabaseFromDisk",
+    "resolveProjectRootDbPath",
+    "resolveWorkflowDatabaseLocation",
+    "vacuumWorkflowDatabase",
+    "wasWorkflowDatabaseOpenAttempted",
+  ];
+
+  for (const name of expected) {
+    assert.ok(
+      typeof (workspaceDb as Record<string, unknown>)[name] === "function",
+      `db-workspace.ts must export ${name} as a function`,
+    );
+  }
+});
+
+test("production modules do not import DB open-state mechanics from gsd-db.ts", () => {
+  const files = walkTsFiles(gsdDir);
+  const violations: Violation[] = [];
+  const staticImportRe = /import\s*\{([\s\S]*?)\}\s*from\s*["'][^"']*gsd-db\.(?:js|ts)["']/g;
+  const dynamicImportRe = /(?:const|let)\s*\{([\s\S]*?)\}\s*=\s*await\s+import\(["'][^"']*gsd-db\.(?:js|ts)["']\)/g;
+
+  for (const abs of files) {
+    const rel = relative(gsdDir, abs);
+    if (rel === "gsd-db.ts" || rel === "db-workspace.ts") continue;
+
+    let content: string;
+    try {
+      content = readFileSync(abs, "utf-8");
+    } catch {
+      continue;
+    }
+
+    for (const re of [staticImportRe, dynamicImportRe]) {
+      re.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(content)) !== null) {
+        const leaked = importNames(match[1] ?? "").filter((name) => DB_WORKSPACE_MECHANICS.has(name));
+        if (leaked.length === 0) continue;
+        violations.push({
+          file: rel,
+          line: content.slice(0, match.index).split("\n").length,
+          snippet: leaked.join(", "),
+          kind: "db-workspace-leak",
+        });
+      }
+    }
+  }
+
+  if (violations.length > 0) {
+    const lines = violations.map(
+      (v) => `  ${v.file}:${v.line} [${v.kind}] — ${v.snippet}`,
+    );
+    assert.fail(
+      `Found ${violations.length} DB open-state import(s) from gsd-db.ts:\n` +
+        lines.join("\n") +
+        "\n\nImport these through db-workspace.ts so gsd-db.ts stays the single-writer implementation, not the caller-facing DB Workspace Interface.",
+    );
+  }
+});
+
 test("the invariant test touches every .ts module under gsd/ (sanity check)", () => {
   const files = walkTsFiles(gsdDir);
   // Rough sanity: ensure we're not accidentally walking an empty tree
@@ -177,4 +278,3 @@ test("the invariant test touches every .ts module under gsd/ (sanity check)", ()
   assert.ok(rels.includes("memory-store.ts"), "walker must include memory-store.ts");
   assert.ok(rels.includes("workflow-manifest.ts"), "walker must include workflow-manifest.ts");
 });
-

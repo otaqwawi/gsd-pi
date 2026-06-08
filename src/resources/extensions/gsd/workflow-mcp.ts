@@ -1,8 +1,12 @@
 import { execSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getRequiredWorkflowToolsForUnit } from "./unit-tool-contracts.js";
+import {
+  WORKFLOW_TOOL_SURFACE_NAMES,
+  isWorkflowToolSurfaceName,
+} from "./workflow-tool-surface.js";
 
 type WorkflowExecutorsModule = typeof import("./tools/workflow-tool-executors.js");
 
@@ -42,73 +46,9 @@ export function resolveWorkflowMcpProjectRoot(sessionCwd: string): string {
   return resolved;
 }
 
-const MCP_WORKFLOW_TOOL_SURFACE = new Set([
-  "gsd_cancel",
-  "gsd_captures",
-  "ask_user_questions",
-  "gsd_capture_thought",
-  "gsd_doctor",
-  "gsd_execute",
-  "gsd_memory_query",
-  "gsd_memory_graph",
-  "gsd_decision_save",
-  "gsd_exec",
-  "gsd_exec_search",
-  "gsd_graph",
-  "gsd_history",
-  "gsd_knowledge",
-  "gsd_progress",
-  "gsd_query",
-  "gsd_resume",
-  "gsd_result",
-  "gsd_resolve_blocker",
-  "gsd_roadmap",
-  "gsd_status",
-  "gsd_complete_milestone",
-  "gsd_complete_task",
-  "gsd_complete_slice",
-  "gsd_generate_milestone_id",
-  "gsd_journal_query",
-  "gsd_milestone_complete",
-  "gsd_milestone_generate_id",
-  "gsd_milestone_reopen",
-  "gsd_checkpoint_db",
-  "gsd_milestone_plan",
-  "gsd_milestone_status",
-  "gsd_milestone_validate",
-  "gsd_plan_task",
-  "gsd_plan_milestone",
-  "gsd_plan_slice",
-  "gsd_replan_slice",
-  "gsd_reassess_roadmap",
-  "gsd_reopen_milestone",
-  "gsd_reopen_slice",
-  "gsd_reopen_task",
-  "gsd_requirement_save",
-  "gsd_requirement_update",
-  "gsd_roadmap_reassess",
-  "gsd_save_decision",
-  "gsd_save_gate_result",
-  "gsd_save_requirement",
-  "gsd_save_summary",
-  "gsd_skip_slice",
-  "gsd_slice_plan",
-  "gsd_slice_replan",
-  "gsd_slice_complete",
-  "gsd_slice_reopen",
-  "gsd_summary_save",
-  "gsd_task_plan",
-  "gsd_task_complete",
-  "gsd_task_reopen",
-  "gsd_update_requirement",
-  "gsd_uat_exec",
-  "gsd_uat_result_save",
-  "gsd_validate_milestone",
-]);
-
 /** Workflow MCP tools are validated by transport compatibility, not pi tool-compat profiles. */
 export function isWorkflowMcpSurfaceTool(toolName: string): boolean {
-  return MCP_WORKFLOW_TOOL_SURFACE.has(toolName);
+  return isWorkflowToolSurfaceName(toolName);
 }
 
 function parseLookupOutput(output: Buffer | string): string {
@@ -276,8 +216,12 @@ function getBundledWorkflowWriteGateModulePath(): string | null {
 
 function getResolveTsHookPath(): string | null {
   const repoRoot = findGsdPiRepoRoot(dirname(fileURLToPath(import.meta.url)));
+  const sourceRepoRoot = repoRoot && basename(repoRoot) === "dist-test" ? dirname(repoRoot) : repoRoot;
   return firstExistingPath([
-    ...(repoRoot
+    ...(sourceRepoRoot
+      ? [resolve(sourceRepoRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")]
+      : []),
+    ...(repoRoot && repoRoot !== sourceRepoRoot
       ? [resolve(repoRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")]
       : []),
     resolve(fileURLToPath(new URL("./tests/resolve-ts.mjs", import.meta.url))),
@@ -488,13 +432,13 @@ export function getWorkflowTransportSupportError(
 
   const uniqueRequired = [...new Set(requiredTools)];
   const missing = (options.activeTools && options.activeTools.length > 0)
-    ? uniqueRequired.filter((tool) => !MCP_WORKFLOW_TOOL_SURFACE.has(tool) && !hasRequiredTool(tool, options.activeTools!))
-    : uniqueRequired.filter((tool) => !MCP_WORKFLOW_TOOL_SURFACE.has(tool));
+    ? uniqueRequired.filter((tool) => !isWorkflowToolSurfaceName(tool) && !hasRequiredTool(tool, options.activeTools!))
+    : uniqueRequired.filter((tool) => !isWorkflowToolSurfaceName(tool));
   if (missing.length === 0) return null;
 
   if (options.activeTools && options.activeTools.length > 0) {
     return `Provider ${providerLabel} cannot run ${surface}${unitLabel}: this unit requires ${missing.join(", ")}, but the active runtime toolset currently exposes only ${options.activeTools.slice().sort().join(", ")}.`;
   }
 
-  return `Provider ${providerLabel} cannot run ${surface}${unitLabel}: this unit requires ${missing.join(", ")}, but the workflow MCP transport currently exposes only ${Array.from(MCP_WORKFLOW_TOOL_SURFACE).sort().join(", ")}.`;
+  return `Provider ${providerLabel} cannot run ${surface}${unitLabel}: this unit requires ${missing.join(", ")}, but the workflow MCP transport currently exposes only ${[...WORKFLOW_TOOL_SURFACE_NAMES].sort().join(", ")}.`;
 }

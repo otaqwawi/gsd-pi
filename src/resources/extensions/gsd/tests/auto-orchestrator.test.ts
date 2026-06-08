@@ -302,6 +302,46 @@ test("advance() sets active unit and is reflected in status", async (t) => {
   });
 });
 
+test("advance() blocks source dispatch when an earlier slice is incomplete", async (t) => {
+  const f = makeFixture({
+    dispatch: () => ({
+      action: "dispatch",
+      unitType: "execute-task",
+      unitId: "M001/S02/T01",
+      prompt: "fixture-prompt",
+    }),
+  });
+  t.after(() => f.cleanup());
+
+  insertSlice({
+    id: "S02",
+    milestoneId: "M001",
+    title: "Second slice",
+    status: "active",
+    risk: "low",
+    depends: [],
+    demo: "",
+    sequence: 2,
+  });
+  insertTask({
+    id: "T01",
+    sliceId: "S02",
+    milestoneId: "M001",
+    title: "Second task",
+    status: "active",
+  });
+
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "blocked");
+  if (result.kind !== "blocked") return;
+  assert.equal(result.action, "stop");
+  assert.match(result.reason, /earlier slice M001\/S01 is not complete/);
+  assert.equal(f.session.pendingOrchestrationDispatch, null);
+  assert.deepEqual(f.orchestrator.getStatus().activeUnit, undefined);
+  assert.ok(f.journalNames().includes("advance-blocked"));
+});
+
 test("getStatus() returns defensive copy of activeUnit", async (t) => {
   const f = makeFixture();
   t.after(() => f.cleanup());

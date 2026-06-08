@@ -28,12 +28,12 @@ import {
   getMilestoneSlices,
   getLatestAssessmentByScope,
   updateMilestoneStatus,
-  refreshOpenDatabaseFromDisk,
   getCompletedMilestoneTaskFileHints,
   getMilestoneCommitAttributionShas,
   recordMilestoneCommitAttribution,
   transaction,
 } from "./gsd-db.js";
+import { refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
 import { isValidationTerminal } from "./state.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning, logError } from "./workflow-logger.js";
@@ -125,7 +125,7 @@ export function refreshRecoveryDbForArtifact(
   if (unitType !== "plan-slice" && unitType !== "execute-task" && unitType !== "complete-milestone") return { ok: true };
   if (!isDbAvailable()) return { ok: true };
 
-  if (!refreshOpenDatabaseFromDisk()) {
+  if (!refreshWorkflowDatabaseFromDisk()) {
     return {
       ok: false,
       fatal: unitType === "execute-task" || unitType === "complete-milestone",
@@ -535,7 +535,7 @@ export function verifyExpectedArtifact(
       try {
         let taskIds: string[] | null = null;
         if (isDbAvailable()) {
-          const refreshed = refreshOpenDatabaseFromDisk();
+          const refreshed = refreshWorkflowDatabaseFromDisk();
           if (refreshed) {
             const tasks = getSliceTasks(mid, sid);
             if (tasks.length > 0) taskIds = tasks.map(t => t.id);

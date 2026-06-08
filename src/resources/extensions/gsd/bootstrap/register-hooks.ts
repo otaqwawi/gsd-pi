@@ -29,6 +29,7 @@ import {
   markToolStart,
   recordToolInvocationError,
 } from "../auto-runtime-state.js";
+import { applyProviderPayloadPolicy } from "../provider-payload-policy.js";
 
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { maybePauseAutoForApprovalGate, resetPendingGatePauseGuard } from "./pending-gate-pause.js";
@@ -50,7 +51,7 @@ import { registerPlanMilestoneSchemaRecovery } from "./plan-milestone-schema-rec
 import { AUTO_UNIT_SCOPED_TOOLS, RUN_UAT_BROWSER_TOOL_NAMES, isWorkflowAliasTool } from "../auto-unit-tool-scope.js";
 import { filterToolsForProvider } from "../model-router.js";
 import { RUN_UAT_READ_ONLY_TOOL_NAMES, RUN_UAT_WORKFLOW_TOOL_NAMES } from "../tool-presentation-plan.js";
-import { injectSourceContextBlockIntoPayload, supportsSourceObservationsForUnit } from "../source-observations.js";
+import { supportsSourceObservationsForUnit } from "../source-observations.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -1458,66 +1459,10 @@ export function registerHooks(
     const payload = event.payload as Record<string, unknown> | null;
     if (!payload || typeof payload !== "object") return;
 
-    // ── Context Management ──────────────────────────────────────────────
-    // Load preferences once for both masking and truncation.
-    try {
-      const { loadEffectiveGSDPreferences } = await import("../preferences.js");
-      const {
-        createObservationMask,
-        createResponsesInputObservationMask,
-        truncateContextResultMessages,
-        truncateResponsesInputResultItems,
-      } = await import("../context-masker.js");
-      const prefs = loadEffectiveGSDPreferences();
-      const cmConfig = prefs?.preferences.context_management;
-
-      // Observation masking: replace old tool results with placeholders.
-      // Only active during auto-mode when context_management.observation_masking is enabled.
-      if (isAutoActive() && cmConfig?.observation_masking !== false) {
-        const keepTurns = cmConfig?.observation_mask_turns ?? 8;
-        const messages = payload.messages;
-        if (Array.isArray(messages)) {
-          payload.messages = createObservationMask(keepTurns)(messages);
-        }
-        const input = payload.input;
-        if (Array.isArray(input)) {
-          payload.input = createResponsesInputObservationMask(keepTurns)(input);
-        }
-      }
-
-      // Tool result truncation: cap individual tool result content length.
-      // Applies in ALL modes (auto + interactive) to prevent context bloat.
-      // In pi-ai format, toolResult messages have role: "toolResult" and content: TextContent[].
-      // Creates new objects to avoid mutating shared conversation state.
-      const maxChars = cmConfig?.tool_result_max_chars ?? 800;
-      const msgs = payload.messages;
-      if (Array.isArray(msgs)) {
-        payload.messages = truncateContextResultMessages(msgs as any, maxChars);
-      }
-      const input = payload.input;
-      if (Array.isArray(input)) {
-        payload.input = truncateResponsesInputResultItems(input as any, maxChars);
-      }
-    } catch { /* non-fatal */ }
-
-    try {
-      if (isAutoActive()) {
-        const sourceContextBlock = getSourceObservationStore().renderActiveBlock();
-        if (sourceContextBlock) {
-          const nextPayload = injectSourceContextBlockIntoPayload(payload, sourceContextBlock);
-          Object.assign(payload, nextPayload);
-        }
-      }
-    } catch { /* non-fatal */ }
-
-    // ── Service Tier ────────────────────────────────────────────────────
-    const modelId = event.model?.id;
-    if (!modelId) return payload;
-    const { getEffectiveServiceTier, supportsServiceTier } = await import("../service-tier.js");
-    const tier = getEffectiveServiceTier();
-    if (!tier || !supportsServiceTier(modelId)) return payload;
-    payload.service_tier = tier;
-    return payload;
+    return applyProviderPayloadPolicy({
+      payload,
+      modelId: event.model?.id,
+    });
   });
 
   // Capability-aware model routing hook (ADR-004)

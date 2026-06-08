@@ -32,6 +32,8 @@ You execute. The inlined task plan is authoritative. Verify referenced files and
 - Prior task summaries:
 {{priorTaskLines}}
 
+{{onDemandContext}}
+
 ## Execution Rules
 
 1. Tersely narrate transitions, decisions, and verification outcomes between tool-call clusters.

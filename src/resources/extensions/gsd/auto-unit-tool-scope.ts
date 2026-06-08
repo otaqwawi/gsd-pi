@@ -3,31 +3,17 @@ import {
   AUTO_UNIT_SCOPED_TOOLS,
   getForbiddenGsdToolReason,
 } from "./unit-tool-contracts.js";
+import {
+  WORKFLOW_TOOL_ALIAS_PAIRS,
+  canonicalWorkflowSurfaceToolName,
+  isWorkflowSurfaceAliasTool,
+  stripMcpToolPrefix,
+} from "./workflow-tool-surface.js";
 
 export {
   AUTO_UNIT_SCOPED_TOOLS,
   RUN_UAT_BROWSER_TOOL_NAMES,
 } from "./unit-tool-contracts.js";
-
-const WORKFLOW_TOOL_ALIASES: Record<string, string> = {
-  gsd_save_decision: "gsd_decision_save",
-  gsd_update_requirement: "gsd_requirement_update",
-  gsd_save_requirement: "gsd_requirement_save",
-  gsd_save_summary: "gsd_summary_save",
-  gsd_generate_milestone_id: "gsd_milestone_generate_id",
-  gsd_milestone_plan: "gsd_plan_milestone",
-  gsd_slice_plan: "gsd_plan_slice",
-  gsd_task_plan: "gsd_plan_task",
-  gsd_slice_replan: "gsd_replan_slice",
-  gsd_complete_slice: "gsd_slice_complete",
-  gsd_milestone_complete: "gsd_complete_milestone",
-  gsd_milestone_validate: "gsd_validate_milestone",
-  gsd_roadmap_reassess: "gsd_reassess_roadmap",
-  gsd_complete_task: "gsd_task_complete",
-  gsd_reopen_task: "gsd_task_reopen",
-  gsd_reopen_slice: "gsd_slice_reopen",
-  gsd_reopen_milestone: "gsd_milestone_reopen",
-};
 
 const EXECUTE_TASK_UNIT_TYPES = new Set([
   "execute-task",
@@ -55,7 +41,7 @@ const EXTRA_SCOPED_GSD_LIFECYCLE_TOOLS = [
 const SCOPED_GSD_LIFECYCLE_TOOLS = new Set(
   [
     ...Object.values(AUTO_UNIT_SCOPED_TOOLS).flat(),
-    ...Object.values(WORKFLOW_TOOL_ALIASES),
+    ...WORKFLOW_TOOL_ALIAS_PAIRS.map(({ canonical }) => canonical),
     ...EXTRA_SCOPED_GSD_LIFECYCLE_TOOLS,
   ]
     .filter((tool) => tool.startsWith("gsd_"))
@@ -72,19 +58,12 @@ type AutoUnitToolScopeResult = {
   displayReason?: string;
 };
 
-function stripMcpToolPrefix(toolName: string): string {
-  if (!toolName.startsWith("mcp__")) return toolName;
-  const toolSeparator = toolName.indexOf("__", "mcp__".length);
-  return toolSeparator >= 0 ? toolName.slice(toolSeparator + 2) : toolName;
-}
-
 export function canonicalWorkflowToolName(toolName: string): string {
-  const base = stripMcpToolPrefix(toolName);
-  return WORKFLOW_TOOL_ALIASES[base] ?? base;
+  return canonicalWorkflowSurfaceToolName(toolName);
 }
 
 export function isWorkflowAliasTool(toolName: string): boolean {
-  return Object.prototype.hasOwnProperty.call(WORKFLOW_TOOL_ALIASES, stripMcpToolPrefix(toolName));
+  return isWorkflowSurfaceAliasTool(toolName);
 }
 
 function hardBlockReason(unitType: string, what: string): string {

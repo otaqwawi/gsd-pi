@@ -14,12 +14,12 @@ import {
   insertMilestone,
   insertSlice,
   insertTask,
-  openDatabase,
   transaction,
   updateMilestoneStatus,
   updateSliceStatus,
   _getAdapter,
 } from './gsd-db.js';
+import { openWorkflowDatabasePath } from './db-workspace.js';
 import {
   resolveGsdRootFile,
   resolveMilestoneFile,
@@ -753,7 +753,7 @@ export function migrateFromMarkdown(gsdDir: string): {
 
   // Open DB if not already open
   if (!_getAdapter()) {
-    openDatabase(dbPath);
+    openWorkflowDatabasePath(dbPath);
   }
 
   let decisions = 0;

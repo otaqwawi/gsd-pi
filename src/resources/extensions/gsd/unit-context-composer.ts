@@ -45,6 +45,7 @@ import {
   type ContextModePolicy,
   type UnitContextManifest,
 } from "./unit-context-manifest.js";
+import type { UnitPromptContextContract } from "./tool-contract.js";
 
 /**
  * Async function mapping an artifact key to its inlined-content string,
@@ -195,7 +196,31 @@ export interface ComposedUnitContext {
   readonly inline: string;
 }
 
+export type UnitContextBlockMode = "prepend" | "inline" | "excerpt" | "computed";
+
+export interface ComposedUnitContextBlock {
+  readonly key: string;
+  readonly mode: UnitContextBlockMode;
+  readonly body: string;
+}
+
+export interface ComposedContractedUnitContext extends ComposedUnitContext {
+  readonly blocks: readonly ComposedUnitContextBlock[];
+  readonly onDemand: readonly ArtifactKey[];
+}
+
 const SECTION_SEPARATOR = "\n\n---\n\n";
+
+interface UnitContextCompositionContract {
+  readonly unitType: string;
+  readonly artifacts: {
+    readonly inline: readonly ArtifactKey[];
+    readonly excerpt: readonly ArtifactKey[];
+    readonly onDemand: readonly ArtifactKey[];
+    readonly computed: readonly ComputedArtifactId[];
+    readonly prepend: readonly ComputedArtifactId[];
+  };
+}
 
 /**
  * Compose all manifest-declared context for a unit type using the v2
@@ -220,36 +245,73 @@ export async function composeUnitContext(
   const manifest: UnitContextManifest | null = resolveManifest(unitType);
   if (!manifest) return { prepend: "", inline: "" };
 
-  // Single-source `unitType`: the manifest is resolved against the
+  const composed = await composeDeclaredUnitContext({
+    unitType,
+    artifacts: {
+      inline: manifest.artifacts.inline,
+      excerpt: manifest.artifacts.excerpt,
+      onDemand: manifest.artifacts.onDemand,
+      computed: manifest.artifacts.computed ?? [],
+      prepend: manifest.prepend ?? [],
+    },
+  }, opts);
+  return {
+    prepend: composed.prepend,
+    inline: composed.inline,
+  };
+}
+
+export async function composeContractedUnitContext(
+  contract: UnitPromptContextContract,
+  opts: ComposeUnitContextOptions,
+): Promise<ComposedContractedUnitContext> {
+  return composeDeclaredUnitContext(contract, opts);
+}
+
+async function composeDeclaredUnitContext(
+  contract: UnitContextCompositionContract,
+  opts: ComposeUnitContextOptions,
+): Promise<ComposedContractedUnitContext> {
+  // Single-source `unitType`: contract/manifest selection comes from the
   // function arg, but computed builders read it from `base.unitType`.
-  // If those ever diverge (caller passes one type to composeUnitContext
-  // but a different one in opts.base), the composer would silently
-  // mix one unit's manifest with another unit's computed context.
-  // Normalize here so the composer dispatches a consistent identity
-  // through to every builder.
+  // Normalize here so every builder sees the same Unit identity.
   const normalizedOpts: ComposeUnitContextOptions = {
     ...opts,
-    base: { ...opts.base, unitType },
+    base: { ...opts.base, unitType: contract.unitType },
   };
 
-  const prependBlocks = await runComputed(manifest.prepend ?? [], normalizedOpts);
-  const inlineBlocks: string[] = [];
+  const prependBlocks = await runComputedBlocks(
+    contract.artifacts.prepend,
+    normalizedOpts,
+    "prepend",
+  );
+  const inlineBlocks: ComposedUnitContextBlock[] = [];
 
-  for (const key of manifest.artifacts.inline) {
+  for (const key of contract.artifacts.inline) {
     if (!normalizedOpts.resolveArtifact) break;
     const body = await normalizedOpts.resolveArtifact(key);
-    if (body && body.length > 0) inlineBlocks.push(body);
+    if (body && body.length > 0) {
+      inlineBlocks.push({ key, mode: "inline", body });
+    }
   }
-  for (const key of manifest.artifacts.excerpt) {
+  for (const key of contract.artifacts.excerpt) {
     if (!normalizedOpts.resolveExcerpt) break;
     const body = await normalizedOpts.resolveExcerpt(key);
-    if (body && body.length > 0) inlineBlocks.push(body);
+    if (body && body.length > 0) {
+      inlineBlocks.push({ key, mode: "excerpt", body });
+    }
   }
-  inlineBlocks.push(...await runComputed(manifest.artifacts.computed ?? [], normalizedOpts));
+  inlineBlocks.push(...await runComputedBlocks(
+    contract.artifacts.computed,
+    normalizedOpts,
+    "computed",
+  ));
 
   return {
-    prepend: prependBlocks.join(SECTION_SEPARATOR),
-    inline: inlineBlocks.join(SECTION_SEPARATOR),
+    prepend: prependBlocks.map((block) => block.body).join(SECTION_SEPARATOR),
+    inline: inlineBlocks.map((block) => block.body).join(SECTION_SEPARATOR),
+    blocks: [...prependBlocks, ...inlineBlocks],
+    onDemand: contract.artifacts.onDemand,
   };
 }
 
@@ -258,10 +320,11 @@ export async function composeUnitContext(
  * Missing registry entries (manifest declares the id but caller didn't
  * register it) are skipped silently — see composeUnitContext rationale.
  */
-async function runComputed(
+async function runComputedBlocks(
   ids: readonly ComputedArtifactId[],
   opts: ComposeUnitContextOptions,
-): Promise<string[]> {
+  mode: Extract<UnitContextBlockMode, "prepend" | "computed">,
+): Promise<ComposedUnitContextBlock[]> {
   if (ids.length === 0 || !opts.computed) return [];
   // Type safety lives at the registration boundary (caller-supplied
   // `computed` is typed against ComputedArtifactInputs[K] per id). Inside
@@ -274,12 +337,14 @@ async function runComputed(
     inputs: unknown;
   };
   const registry = opts.computed as Record<string, AnyEntry | undefined>;
-  const out: string[] = [];
+  const out: ComposedUnitContextBlock[] = [];
   for (const id of ids) {
     const entry = registry[id];
     if (!entry) continue;
     const body = await entry.build(entry.inputs, opts.base);
-    if (body && body.length > 0) out.push(body);
+    if (body && body.length > 0) {
+      out.push({ key: id, mode, body });
+    }
   }
   return out;
 }

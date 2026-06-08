@@ -13,11 +13,11 @@ import {
   getMilestoneSlices,
   insertVerificationEvidence,
   upsertDecision,
-  openDatabase,
   setTaskBlockerDiscovered,
   insertOrIgnoreSlice,
   insertOrIgnoreTask,
 } from "./gsd-db.js";
+import { openWorkflowDatabasePath } from "./db-workspace.js";
 import { isClosedStatus } from "./status-guards.js";
 import { invalidateStateCache } from "./state.js";
 import { clearPathCache, resolveGsdPathContract } from "./paths.js";
@@ -500,7 +500,7 @@ function _reconcileWorktreeLogsInner(
   atomicWriteSync(join(mainBasePath, ".gsd", "event-log.jsonl"), logContent);
 
   // Step 8: Replay into DB (wrapped in a transaction by replayEvents)
-  openDatabase(resolveGsdPathContract(mainBasePath).projectDb);
+  openWorkflowDatabasePath(resolveGsdPathContract(mainBasePath).projectDb);
   replayEvents(merged);
 
   // Step 9: Write manifest
@@ -655,7 +655,7 @@ export function resolveConflict(
   writeEventLog(targetBasePath, targetBaseEvents.concat(rewrittenTargetEvents));
 
   // Replay resolved events through the DB (updates DB state)
-  openDatabase(resolveGsdPathContract(basePath).projectDb);
+  openWorkflowDatabasePath(resolveGsdPathContract(basePath).projectDb);
   replayEvents(eventsToReplay);
   invalidateStateCache();
   clearPathCache();

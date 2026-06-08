@@ -6,8 +6,8 @@ import {
   getMilestoneSlices,
   getSliceTasks,
   isDbAvailable,
-  refreshOpenDatabaseFromDisk,
 } from "./gsd-db.js";
+import { refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
 import { parsePlan, parseRoadmap } from "./parsers-legacy.js";
 import {
   milestonesDir,
@@ -179,7 +179,7 @@ export async function checkMarkdownHierarchyAgainstDb(
   // The markdown projections may have just been written by a workflow/MCP
   // server in another process. Reopen before comparing so startup does not
   // warn from a stale long-lived SQLite handle.
-  refreshOpenDatabaseFromDisk();
+  refreshWorkflowDatabaseFromDisk();
 
   const dbScan = scanDbHierarchy();
   const beforeDb = dbScan.counts;

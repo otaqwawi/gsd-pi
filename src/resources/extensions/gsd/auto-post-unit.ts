@@ -49,7 +49,8 @@ import { regenerateIfMissing } from "./workflow-projections.js";
 import { WorktreeStateProjection } from "./worktree-state-projection.js";
 import { createWorkspace, scopeMilestone } from "./workspace.js";
 import { normalizeWorktreePathForCompare } from "./worktree-root.js";
-import { isDbAvailable, getDbPath, refreshOpenDatabaseFromDisk, getTask, getSlice, getMilestone, getMilestoneSlices, updateTaskStatus, _getAdapter, getVerificationEvidence } from "./gsd-db.js";
+import { isDbAvailable, getTask, getSlice, getMilestone, getMilestoneSlices, updateTaskStatus, _getAdapter, getVerificationEvidence } from "./gsd-db.js";
+import { getWorkflowDatabasePath, refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
 import { renderPlanCheckboxes, renderRoadmapFromDb } from "./markdown-renderer.js";
 import { parseRoadmap as parseLegacyRoadmap } from "./parsers-legacy.js";
 import { consumeSignal } from "./session-status-io.js";
@@ -1273,9 +1274,9 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
     await new Promise(r => setTimeout(r, 100));
   }
 
-  const dbPath = getDbPath();
+  const dbPath = getWorkflowDatabasePath();
   if (isDbAvailable() && dbPath && dbPath !== ":memory:") {
-    const refreshed = refreshOpenDatabaseFromDisk();
+    const refreshed = refreshWorkflowDatabaseFromDisk();
     if (!refreshed) {
       logWarning("db", "post-unit database refresh failed; derived state may be stale");
     }

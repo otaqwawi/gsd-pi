@@ -299,17 +299,13 @@ function quoteToolNames(toolNames: readonly string[]): string {
 }
 
 function validateCanonicalPresentation(params: UatResultSaveParams): string | null {
-  const aliasHints: Record<string, string> = {
-    gsd_save_summary: "gsd_summary_save",
-    gsd_complete_task: "gsd_task_complete",
-    gsd_complete_slice: "gsd_slice_complete",
-    gsd_milestone_complete: "gsd_complete_milestone",
-  };
   const errors: string[] = [];
   for (const toolName of params.presentation.presentedTools) {
     const baseName = parseMcpToolName(toolName)?.tool ?? toolName;
-    const canonical = aliasHints[baseName];
-    if (canonical) errors.push(`presentation tool "${toolName}" uses an alias; use canonical "${canonical}"`);
+    const canonical = canonicalWorkflowToolName(baseName);
+    if (canonical !== baseName) {
+      errors.push(`presentation tool "${toolName}" uses an alias; use canonical "${canonical}"`);
+    }
   }
 
   const presentedCanonical = new Set(
