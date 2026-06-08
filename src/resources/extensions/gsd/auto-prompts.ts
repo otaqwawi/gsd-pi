@@ -36,8 +36,18 @@ import {
 } from "./gate-registry.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
 import { readPhaseAnchor, formatAnchorForPrompt } from "./phase-anchor.js";
-import { composeContextModeInstructions, composeInlinedContext, composeUnitContext, type ArtifactResolver, type ContextModeRenderMode, type ExcerptResolver } from "./unit-context-composer.js";
-import { resolveManifest } from "./unit-context-manifest.js";
+import {
+  composeContextModeInstructions,
+  composeContractedUnitContext,
+  composeInlinedContext,
+  composeUnitContext,
+  type ArtifactResolver,
+  type ComposedUnitContextBlock,
+  type ContextModeRenderMode,
+  type ExcerptResolver,
+} from "./unit-context-composer.js";
+import { resolveManifest, type ArtifactKey } from "./unit-context-manifest.js";
+import { compileUnitContextContract, type UnitPromptContextContract } from "./tool-contract.js";
 import { readCompactionSnapshot } from "./compaction-snapshot.js";
 import { logWarning } from "./workflow-logger.js";
 import { inlineGraphSubgraph } from "./graph-context.js";
@@ -285,6 +295,39 @@ function prependContextModeToBlock(
   if (!contextMode) return block;
   if (!block.trim()) return contextMode;
   return `${contextMode}\n\n${block}`;
+}
+
+function requireUnitPromptContextContract(unitType: string): UnitPromptContextContract {
+  const result = compileUnitContextContract(unitType);
+  if (result.ok) return result.contract;
+  throw new Error(result.detail);
+}
+
+function requireComposedArtifactBlock(
+  blocks: readonly ComposedUnitContextBlock[],
+  unitType: string,
+  key: ArtifactKey,
+): string {
+  const block = blocks.find((item) => item.key === key);
+  if (!block) {
+    throw new Error(`Unit Context Contract for ${unitType} did not compose required artifact ${key}`);
+  }
+  return block.body;
+}
+
+function renderExecuteTaskOnDemandContext(
+  base: string,
+  mid: string,
+  sid: string,
+  artifacts: readonly ArtifactKey[],
+): string {
+  if (!artifacts.includes("slice-research")) return "";
+  const researchPath = relSliceFile(base, mid, sid, "RESEARCH");
+  return [
+    "## On-demand Context",
+    "",
+    `Slice research is available at \`${researchPath}\`. Read it only if the inlined task plan, slice plan excerpt, and carry-forward context do not explain a required implementation detail.`,
+  ].join("\n");
 }
 
 // ─── Executor Constraints ─────────────────────────────────────────────────────
@@ -2510,7 +2553,7 @@ export async function buildExecuteTaskPrompt(
   const taskPlanPath = resolveTaskFile(base, mid, sid, tid, "PLAN");
   const taskPlanContent = taskPlanPath ? await loadFile(taskPlanPath) : null;
   const taskPlanRelPath = relSlicePath(base, mid, sid) + `/tasks/${tid}-PLAN.md`;
-  const taskPlanInline = taskPlanContent
+  const taskPlanContext = taskPlanContent
     ? [
       "## Inlined Task Plan (authoritative local execution contract)",
       `Source: \`${taskPlanRelPath}\``,
@@ -2521,12 +2564,12 @@ export async function buildExecuteTaskPrompt(
       "## Inlined Task Plan (authoritative local execution contract)",
       `Task plan not found at dispatch time. Read \`${taskPlanRelPath}\` before executing.`,
     ].join("\n");
-  trackPromptContext(contextTelemetry, "task-plan", taskPlanContent ? "inline" : "on-demand", taskPlanInline, taskPlanContent ? undefined : "missing at dispatch");
+  trackPromptContext(contextTelemetry, "task-plan", taskPlanContent ? "inline" : "on-demand", taskPlanContext, taskPlanContent ? undefined : "missing at dispatch");
 
   const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
   const slicePlanContent = slicePlanPath ? await loadFile(slicePlanPath) : null;
-  const slicePlanExcerpt = extractSliceExecutionExcerpt(slicePlanContent, relSliceFile(base, mid, sid, "PLAN"));
-  trackPromptContext(contextTelemetry, "slice-plan", slicePlanExcerpt ? "excerpt" : "skipped", slicePlanExcerpt, slicePlanExcerpt ? undefined : "missing");
+  const slicePlanContext = extractSliceExecutionExcerpt(slicePlanContent, relSliceFile(base, mid, sid, "PLAN"));
+  trackPromptContext(contextTelemetry, "slice-plan", slicePlanContext ? "excerpt" : "skipped", slicePlanContext, slicePlanContext ? undefined : "missing");
 
   // Check for continue file (new naming or legacy)
   const continueFile = resolveSliceFile(base, mid, sid, "CONTINUE");
@@ -2657,6 +2700,37 @@ export async function buildExecuteTaskPrompt(
   }
   trackPromptContext(contextTelemetry, "templates", "inline", inlinedTemplates, inlineLevel);
 
+  const contextContract = requireUnitPromptContextContract("execute-task");
+  const contractedContext = await composeContractedUnitContext(contextContract, {
+    base: { unitType: "execute-task", basePath: base, milestoneId: mid, sliceId: sid, taskId: tid },
+    resolveArtifact: async (key) => {
+      switch (key) {
+        case "task-plan":
+          return taskPlanContext;
+        case "slice-plan":
+          return slicePlanContext;
+        case "prior-task-summaries":
+          return finalCarryForward;
+        case "templates":
+          return inlinedTemplates;
+        default:
+          return null;
+      }
+    },
+  });
+  const taskPlanInline = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "task-plan");
+  const slicePlanExcerpt = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "slice-plan");
+  const contractedCarryForward = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "prior-task-summaries");
+  const contractedTemplates = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "templates");
+  const onDemandContext = renderExecuteTaskOnDemandContext(base, mid, sid, contractedContext.onDemand);
+  trackPromptContext(
+    contextTelemetry,
+    "slice-research",
+    onDemandContext ? "on-demand" : "skipped",
+    onDemandContext,
+    onDemandContext ? undefined : "not declared by contract",
+  );
+
   const prompt = loadPrompt("execute-task", {
     overridesSection,
     runtimeContext,
@@ -2668,11 +2742,12 @@ export async function buildExecuteTaskPrompt(
     taskPlanPath: taskPlanRelPath,
     taskPlanInline,
     slicePlanExcerpt,
-    carryForwardSection: finalCarryForward,
+    carryForwardSection: contractedCarryForward,
     resumeSection,
     priorTaskLines: priorLines,
+    onDemandContext,
     taskSummaryPath,
-    inlinedTemplates,
+    inlinedTemplates: contractedTemplates,
     verificationBudget,
     gatesToClose,
     skillActivation: buildSkillActivationBlock({
@@ -2683,7 +2758,7 @@ export async function buildExecuteTaskPrompt(
       taskId: tid,
       taskTitle: tTitle,
       taskPlanContent,
-      extraContext: [taskPlanInline, slicePlanExcerpt, finalCarryForward, resumeSection],
+      extraContext: [taskPlanInline, slicePlanExcerpt, contractedCarryForward, resumeSection],
       unitType: "execute-task",
     }),
   });

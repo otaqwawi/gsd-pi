@@ -60,7 +60,8 @@ import { writeUnitRuntimeRecord } from "../unit-runtime.js";
 import { withTimeout, FINALIZE_PRE_TIMEOUT_MS, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
 import { getEligibleSlices } from "../slice-parallel-eligibility.js";
 import { isSliceParallelActive, startSliceParallel } from "../slice-parallel-orchestrator.js";
-import { isDbAvailable, getMilestoneSlices, getSlice, getTask, refreshOpenDatabaseFromDisk } from "../gsd-db.js";
+import { isDbAvailable, getMilestoneSlices, getSlice, getTask } from "../gsd-db.js";
+import { refreshWorkflowDatabaseFromDisk } from "../db-workspace.js";
 import { isClosedStatus } from "../status-guards.js";
 import { setRuntimeKv } from "../db/runtime-kv.js";
 import { getLatestForUnit } from "../db/unit-dispatches.js";
@@ -225,7 +226,7 @@ function rememberRetryDispatch(
 
 function getAlreadyClosedDispatchReason(unitType: string, unitId: string): string | null {
   if (!isDbAvailable()) return null;
-  refreshOpenDatabaseFromDisk();
+  refreshWorkflowDatabaseFromDisk();
   const { milestone, slice, task } = parseUnitId(unitId);
   if (unitType === "execute-task" && milestone && slice && task) {
     const row = getTask(milestone, slice, task);

@@ -11,6 +11,7 @@ import { deriveState } from "./state.js";
 import { gsdProjectionRoot, gsdRoot } from "./paths.js";
 import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 import { logWarning } from "./workflow-logger.js";
+import { backupWorkflowDatabaseSnapshot } from "./db-workspace.js";
 
 export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
   let branches: string[];
@@ -581,7 +582,7 @@ async function confirmRecover(
  * Prints counts of recovered items and the resulting project phase.
  */
 export async function handleRecover(ctx: ExtensionCommandContext, basePath: string, args = ""): Promise<void> {
-  const { isDbAvailable: dbAvailable, clearEngineHierarchy, transaction: dbTransaction, backupDatabaseSnapshot } = await import("./gsd-db.js");
+  const { isDbAvailable: dbAvailable, clearEngineHierarchy, transaction: dbTransaction } = await import("./gsd-db.js");
   const { migrateHierarchyToDb } = await import("./md-importer.js");
   const { invalidateStateCache } = await import("./state.js");
   const { countDbHierarchy, countMarkdownHierarchy, recoverWouldDeleteDbRows } = await import("./migration-auto-check.js");
@@ -604,7 +605,7 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
 
   try {
     // 0. Snapshot the DB before the destructive clear so recover is reversible.
-    const backupPath = backupDatabaseSnapshot("pre-recover");
+    const backupPath = backupWorkflowDatabaseSnapshot("pre-recover");
 
     // 1. Delete + re-populate inside a single transaction for atomicity.
     //    clearEngineHierarchy() uses transaction() internally but transaction()

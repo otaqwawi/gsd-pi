@@ -52,7 +52,6 @@ import { isTerminalMilestoneSummaryContent } from './milestone-summary-classifie
 
 import {
   isDbAvailable,
-  wasDbOpenAttempted,
   getAllMilestones,
   getMilestone,
   getMilestoneSlices,
@@ -63,6 +62,7 @@ import {
   getLatestAssessmentByScope,
   getPendingGateCountForTurn,
 } from './gsd-db.js';
+import { wasWorkflowDatabaseOpenAttempted } from './db-workspace.js';
 import { formatCompletePhaseNextAction, countUnmappedActiveRequirements } from './requirements-backlog.js';
 import type { MilestoneRow } from './db-milestone-artifact-rows.js';
 import type { SliceRow, TaskRow } from './db-task-slice-rows.js';
@@ -395,7 +395,7 @@ export async function deriveState(
     stopDbTimer({ phase: result.phase, milestone: result.activeMilestone?.id });
     _telemetry.dbDeriveCount++;
   } else {
-    if (wasDbOpenAttempted()) {
+    if (wasWorkflowDatabaseOpenAttempted()) {
       logWarning("state", "DB unavailable — refusing implicit markdown state derivation");
     }
     result = {

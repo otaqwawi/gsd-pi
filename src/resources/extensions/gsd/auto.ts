@@ -225,8 +225,8 @@ import {
   getMilestoneSlices,
   getSlice,
   getTask,
-  refreshOpenDatabaseFromDisk,
 } from "./gsd-db.js";
+import { closeWorkflowDatabase } from "./db-workspace.js";
 import { markLatestActiveForWorkerCanceled } from "./db/unit-dispatches.js";
 import { writeUnitRuntimeRecord } from "./unit-runtime.js";
 import { countPendingCaptures } from "./captures.js";
@@ -1674,8 +1674,7 @@ export async function stopAuto(
     // ── Step 6: DB cleanup ──
     if (isDbAvailable()) {
       try {
-        const { closeDatabase } = await import("./gsd-db.js");
-        closeDatabase();
+        closeWorkflowDatabase();
       } catch (e) {
         debugLog("db-close-failed", {
           error: e instanceof Error ? e.message : String(e),

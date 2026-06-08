@@ -36,7 +36,13 @@ import { getSessionLockStatus } from "../session-lock.js";
 import { resolveUokFlags } from "../uok/flags.js";
 import { emitJournalEvent as _emitJournalEvent } from "../journal.js";
 import { loadEffectiveGSDPreferences, getIsolationMode } from "../preferences.js";
-import { detectWorktreeName, resolveProjectRoot } from "../worktree.js";
+import {
+  detectWorktreeName,
+  getMainBranch,
+  resolveProjectRoot,
+  resolveWorktreeProjectRoot,
+} from "../worktree.js";
+import { getPriorSliceCompletionBlocker } from "../dispatch-guard.js";
 import { GitServiceImpl } from "../git-service.js";
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import { WorktreeLifecycle } from "../worktree-lifecycle.js";
@@ -50,8 +56,8 @@ import {
   isDbAvailable,
   getSlice,
   getTask,
-  refreshOpenDatabaseFromDisk,
 } from "../gsd-db.js";
+import { refreshWorkflowDatabaseFromDisk } from "../db-workspace.js";
 import { getErrorMessage } from "../error-utils.js";
 import { logWarning } from "../workflow-logger.js";
 import { existsSync, readFileSync } from "node:fs";
@@ -118,7 +124,7 @@ export interface DispatchDecisionInput {
 
 function getAlreadyClosedDispatchReason(unitType: string, unitId: string): string | null {
   if (!isDbAvailable()) return null;
-  refreshOpenDatabaseFromDisk();
+  refreshWorkflowDatabaseFromDisk();
   const { milestone, slice, task } = parseUnitId(unitId);
   if (unitType === "execute-task" && milestone && slice && task) {
     const row = getTask(milestone, slice, task);
@@ -532,6 +538,30 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     return decideOrchestratorDispatch(this.ctx, this.pi, this.dispatchBasePath, this.s, input);
   }
 
+  private clearPendingDispatch(): void {
+    this.s.pendingOrchestrationDispatch = null;
+  }
+
+  private findPriorSliceCompletionBlocker(unitType: string, unitId: string): string | null {
+    const guardBasePath = resolveWorktreeProjectRoot(
+      this.getLiveDispatchBasePath(),
+      this.s.originalBasePath,
+    );
+    let mainBranch = "main";
+    try {
+      mainBranch = getMainBranch(guardBasePath);
+    } catch (err) {
+      // Preserve legacy dispatch behavior: fall back to main when branch
+      // discovery fails, then let the guard make the progression decision.
+      logWarning(
+        "engine",
+        `branch discovery failed, falling back to main: ${getErrorMessage(err)}`,
+        { file: "orchestrator.ts" },
+      );
+    }
+    return getPriorSliceCompletionBlocker(guardBasePath, mainBranch, unitType, unitId);
+  }
+
   // ── ToolContractAdapter (folded) ─────────────────────────────────────────
 
   private compileUnitToolContract(unitType: string): { ok: true; reason: string } | { ok: false; reason: string } {
@@ -848,6 +878,25 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         return blocked;
       }
 
+      const priorSliceBlocker = this.findPriorSliceCompletionBlocker(decision.unitType, decision.unitId);
+      if (priorSliceBlocker) {
+        this.clearPendingDispatch();
+        const blocked: AutoAdvanceResult = {
+          kind: "blocked",
+          reason: priorSliceBlocker,
+          action: "stop",
+          stateSnapshot: reconciliation.stateSnapshot,
+        };
+        this.journalTransition({
+          name: "advance-blocked",
+          reason: blocked.reason,
+          unitType: decision.unitType,
+          unitId: decision.unitId,
+        });
+        this.postAdvanceRecord(blocked);
+        return blocked;
+      }
+
       const nextKey = `${decision.unitType}:${decision.unitId}`;
 
       // Record every dispatch decision in the ring buffer before pre-flight
@@ -865,8 +914,10 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         // actually completed on disk with a stale DB. Verify + recover before
         // hard-stopping (legacy graduated stuck-recovery parity).
         if (this.tryStuckArtifactRecovery(decision.unitType, decision.unitId)) {
+          this.clearPendingDispatch();
           return this.stuckRecovered(decision, reconciliation.stateSnapshot);
         }
+        this.clearPendingDispatch();
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
           reason: `state did not advance after finalized ${decision.unitType} ${decision.unitId}`,
@@ -890,6 +941,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       // checks coexist: idempotency for the common immediate-repeat case,
       // stuck-loop for the saturated-window case.
       if (this.lastAdvanceKey === nextKey && matchingCount < STUCK_WINDOW_SIZE) {
+        this.clearPendingDispatch();
         const blocked: AutoAdvanceResult = { kind: "blocked", reason: "idempotent advance: unit already active", action: "pause" };
         this.journalTransition({
           name: "advance-blocked",
@@ -910,8 +962,10 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         // complete on disk (stale DB) and recover if so — legacy graduated
         // stuck-recovery parity. Otherwise hard-stop with a diagnosable reason.
         if (this.tryStuckArtifactRecovery(decision.unitType, decision.unitId)) {
+          this.clearPendingDispatch();
           return this.stuckRecovered(decision, reconciliation.stateSnapshot);
         }
+        this.clearPendingDispatch();
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
           reason: `stuck-loop: ${nextKey} picked ${matchingCount} times`,
@@ -929,6 +983,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
 
       const contract = this.compileUnitToolContract(decision.unitType);
       if (!contract.ok) {
+        this.clearPendingDispatch();
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
           reason: contract.reason,
@@ -947,6 +1002,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
 
       const worktree = await this.prepareWorktreeForUnit(decision.unitType, decision.unitId);
       if (!worktree.ok) {
+        this.clearPendingDispatch();
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
           reason: worktree.reason,

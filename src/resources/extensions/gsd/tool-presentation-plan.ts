@@ -8,6 +8,7 @@ import {
   RUN_UAT_WORKFLOW_TOOL_NAMES,
 } from "./unit-tool-contracts.js";
 import { uatTypeIncludesBrowser } from "./uat-policy.js";
+import { canonicalWorkflowSurfaceToolName } from "./workflow-tool-surface.js";
 
 export {
   RUN_UAT_BROWSER_TOOL_NAMES,
@@ -62,30 +63,8 @@ export const RUN_UAT_CLAUDE_NATIVE_TOOL_NAMES = [
   "Grep",
 ] as const;
 
-const WORKFLOW_ALIAS_TO_CANONICAL: Record<string, string> = {
-  gsd_save_decision: "gsd_decision_save",
-  gsd_update_requirement: "gsd_requirement_update",
-  gsd_save_requirement: "gsd_requirement_save",
-  gsd_save_summary: "gsd_summary_save",
-  gsd_generate_milestone_id: "gsd_milestone_generate_id",
-  gsd_milestone_plan: "gsd_plan_milestone",
-  gsd_slice_plan: "gsd_plan_slice",
-  gsd_task_plan: "gsd_plan_task",
-  gsd_slice_replan: "gsd_replan_slice",
-  gsd_complete_slice: "gsd_slice_complete",
-  gsd_milestone_complete: "gsd_complete_milestone",
-  gsd_milestone_validate: "gsd_validate_milestone",
-  gsd_roadmap_reassess: "gsd_reassess_roadmap",
-  gsd_complete_task: "gsd_task_complete",
-  gsd_reopen_task: "gsd_task_reopen",
-  gsd_reopen_slice: "gsd_slice_reopen",
-  gsd_reopen_milestone: "gsd_milestone_reopen",
-};
-
 export function canonicalWorkflowToolName(toolName: string): string {
-  const mcp = parseMcpToolName(toolName);
-  const baseName = mcp?.tool ?? toolName;
-  return WORKFLOW_ALIAS_TO_CANONICAL[baseName] ?? baseName;
+  return canonicalWorkflowSurfaceToolName(toolName);
 }
 
 export function parseMcpToolName(toolName: string): { server: string; tool: string } | null {

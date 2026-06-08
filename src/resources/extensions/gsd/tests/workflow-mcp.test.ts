@@ -17,9 +17,11 @@ import {
   getRequiredWorkflowToolsForAutoUnit,
   getRequiredWorkflowToolsForGuidedUnit,
   resolveWorkflowMcpProjectRoot,
+  isWorkflowMcpSurfaceTool,
   supportsStructuredQuestions,
   usesWorkflowMcpTransport,
 } from "../workflow-mcp.ts";
+import { DB_WORKFLOW_TOOL_NAMES } from "../workflow-tool-surface.ts";
 
 const MCP_STDIO_TIMEOUT_MS = 90_000;
 
@@ -107,6 +109,18 @@ test("workflow MCP capability surface includes native legacy gsd aliases", () =>
   );
 
   assert.equal(err, null);
+});
+
+test("workflow MCP capability surface includes every shared workflow contract tool", () => {
+  for (const name of DB_WORKFLOW_TOOL_NAMES) {
+    assert.equal(isWorkflowMcpSurfaceTool(name), true, `${name} should be in workflow MCP surface`);
+  }
+});
+
+test("workflow MCP capability surface preserves session and read tools outside DB contracts", () => {
+  for (const name of ["gsd_execute", "gsd_status", "gsd_progress", "gsd_doctor", "gsd_graph"]) {
+    assert.equal(isWorkflowMcpSurfaceTool(name), true, `${name} should stay in workflow MCP surface`);
+  }
 });
 
 test("deep project setup units declare required workflow MCP tools", () => {

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
+  composeContractedUnitContext,
   composeContextModeInstructions,
   composeInlinedContext,
   composeUnitContext,
@@ -15,6 +16,7 @@ import {
   type ArtifactResolver,
   type ExcerptResolver,
 } from "../unit-context-composer.ts";
+import { compileUnitContextContract } from "../tool-contract.ts";
 import type {
   ArtifactKey,
   BaseResolverContext,
@@ -268,6 +270,21 @@ test("#4782 phase 2: buildReassessRoadmapPrompt emits composer-shaped context wi
   assert.ok(!prompt.includes("Slice Context (from discussion)"));
 });
 
+test("execute-task prompt surfaces contract-declared on-demand slice research", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  writeArtifacts(base);
+
+  const prompt = await buildExecuteTaskPrompt("M001", "S01", "First", "T01", "Task", base);
+
+  assert.match(prompt, /## On-demand Context/);
+  assert.match(prompt, /\.gsd\/milestones\/M001\/slices\/S01\/S01-RESEARCH\.md/);
+  assert.match(prompt, /Read it only if the inlined task plan, slice plan excerpt, and carry-forward context do not explain/);
+});
+
 test("Context Mode resume injection: eligible prompts include one bounded snapshot block above inlined context", async (t) => {
   const base = makeFixtureBase();
   t.after(() => cleanup(base));
@@ -368,6 +385,36 @@ const fakeBase: BaseResolverContext = {
 test("#4924 v2 composer: returns empty sections for unknown unit type", async () => {
   const out = await composeUnitContext("never-dispatched", { base: fakeBase });
   assert.deepEqual(out, { prepend: "", inline: "" });
+});
+
+test("Unit Context Contract composer exposes keyed blocks and on-demand artifacts", async () => {
+  const result = compileUnitContextContract("execute-task");
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+
+  const calls: ArtifactKey[] = [];
+  const out = await composeContractedUnitContext(result.contract, {
+    base: { ...fakeBase, unitType: "stale-unit", taskId: "T01" },
+    resolveArtifact: async (key) => {
+      calls.push(key);
+      return `BODY:${key}`;
+    },
+  });
+
+  assert.deepEqual(calls, [
+    "task-plan",
+    "slice-plan",
+    "prior-task-summaries",
+    "templates",
+  ]);
+  assert.deepEqual(out.blocks.map((block) => [block.key, block.mode]), [
+    ["task-plan", "inline"],
+    ["slice-plan", "inline"],
+    ["prior-task-summaries", "inline"],
+    ["templates", "inline"],
+  ]);
+  assert.deepEqual(out.onDemand, ["slice-research"]);
+  assert.match(out.inline, /BODY:task-plan\n\n---\n\nBODY:slice-plan/);
 });
 
 test("#4924 v2 composer: omitting resolveArtifact skips inline keys without erroring", async () => {

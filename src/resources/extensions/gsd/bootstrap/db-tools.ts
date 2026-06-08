@@ -12,6 +12,7 @@ import { logError } from "../workflow-logger.js";
 import { getErrorMessage } from "../error-utils.js";
 import { incrementLegacyTelemetry } from "../legacy-telemetry.js";
 import { prepareSaveGateResultArguments } from "../tools/save-gate-result-args.js";
+import { aliasesForWorkflowTool } from "../workflow-tool-surface.js";
 
 async function loadWorkflowExecutors(): Promise<typeof import("../tools/workflow-tool-executors.js")> {
   return importWorkflowExecutorsModule();
@@ -51,6 +52,14 @@ function registerAlias(pi: ExtensionAPI, toolDef: any, aliasName: string, canoni
     promptGuidelines: [`Alias for ${canonicalName} — prefer the canonical name.`],
     execute,
   });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- toolDef shape matches ToolDefinition but varies by schema
+function registerWorkflowTool(pi: ExtensionAPI, toolDef: any): void {
+  pi.registerTool(toolDef);
+  for (const alias of aliasesForWorkflowTool(toolDef.name)) {
+    registerAlias(pi, toolDef, alias, toolDef.name);
+  }
 }
 
 function requirementRootWriteGuard(operation: string, basePath: string): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown>; isError: true } | null {
@@ -171,8 +180,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     },
   };
 
-  pi.registerTool(decisionSaveTool);
-  registerAlias(pi, decisionSaveTool, "gsd_save_decision", "gsd_decision_save");
+  registerWorkflowTool(pi, decisionSaveTool);
 
   // ─── gsd_requirement_update (formerly gsd_update_requirement) ───────────
 
@@ -252,8 +260,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     },
   };
 
-  pi.registerTool(requirementUpdateTool);
-  registerAlias(pi, requirementUpdateTool, "gsd_update_requirement", "gsd_requirement_update");
+  registerWorkflowTool(pi, requirementUpdateTool);
 
   // ─── gsd_requirement_save ─────────────────────────────────────────────
 
@@ -355,8 +362,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     },
   };
 
-  pi.registerTool(requirementSaveTool);
-  registerAlias(pi, requirementSaveTool, "gsd_save_requirement", "gsd_requirement_save");
+  registerWorkflowTool(pi, requirementSaveTool);
 
   // ─── gsd_summary_save (formerly gsd_save_summary) ──────────────────────
 
@@ -413,8 +419,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     },
   };
 
-  pi.registerTool(summarySaveTool);
-  registerAlias(pi, summarySaveTool, "gsd_save_summary", "gsd_summary_save");
+  registerWorkflowTool(pi, summarySaveTool);
 
   // ─── gsd_uat_result_save ─────────────────────────────────────────────────
 
@@ -503,7 +508,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     },
   };
 
-  pi.registerTool(uatResultSaveTool);
+  registerWorkflowTool(pi, uatResultSaveTool);
 
   // ─── gsd_milestone_generate_id (formerly gsd_generate_milestone_id) ────
 
@@ -592,8 +597,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     },
   };
 
-  pi.registerTool(milestoneGenerateIdTool);
-  registerAlias(pi, milestoneGenerateIdTool, "gsd_generate_milestone_id", "gsd_milestone_generate_id");
+  registerWorkflowTool(pi, milestoneGenerateIdTool);
 
   // ─── gsd_plan_milestone (gsd_milestone_plan alias) ─────────────────────
 
@@ -664,8 +668,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: planMilestoneExecute,
   };
 
-  pi.registerTool(planMilestoneTool);
-  registerAlias(pi, planMilestoneTool, "gsd_milestone_plan", "gsd_plan_milestone");
+  registerWorkflowTool(pi, planMilestoneTool);
 
   // ─── gsd_plan_slice (gsd_slice_plan alias) ─────────────────────────────
 
@@ -714,8 +717,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: planSliceExecute,
   };
 
-  pi.registerTool(planSliceTool);
-  registerAlias(pi, planSliceTool, "gsd_slice_plan", "gsd_plan_slice");
+  registerWorkflowTool(pi, planSliceTool);
 
   // ─── gsd_plan_task (gsd_task_plan alias) ───────────────────────────────
 
@@ -788,8 +790,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: planTaskExecute,
   };
 
-  pi.registerTool(planTaskTool);
-  registerAlias(pi, planTaskTool, "gsd_task_plan", "gsd_plan_task");
+  registerWorkflowTool(pi, planTaskTool);
 
   // ─── gsd_task_complete (gsd_complete_task alias) ────────────────────────
 
@@ -857,8 +858,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: taskCompleteExecute,
   };
 
-  pi.registerTool(taskCompleteTool);
-  registerAlias(pi, taskCompleteTool, "gsd_complete_task", "gsd_task_complete");
+  registerWorkflowTool(pi, taskCompleteTool);
 
   // ─── gsd_slice_complete (gsd_complete_slice alias) ─────────────────────
 
@@ -943,8 +943,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: sliceCompleteExecute,
   };
 
-  pi.registerTool(sliceCompleteTool);
-  registerAlias(pi, sliceCompleteTool, "gsd_complete_slice", "gsd_slice_complete");
+  registerWorkflowTool(pi, sliceCompleteTool);
 
   // ─── gsd_skip_slice (#3477 / #3487) ───────────────────────────────────
 
@@ -1016,7 +1015,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     }
   };
 
-  pi.registerTool({
+  registerWorkflowTool(pi, {
     name: "gsd_skip_slice",
     label: "Skip Slice",
     description:
@@ -1081,8 +1080,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: milestoneCompleteExecute,
   };
 
-  pi.registerTool(milestoneCompleteTool);
-  registerAlias(pi, milestoneCompleteTool, "gsd_milestone_complete", "gsd_complete_milestone");
+  registerWorkflowTool(pi, milestoneCompleteTool);
 
   // ─── gsd_validate_milestone (gsd_milestone_validate alias) ─────────────
 
@@ -1121,8 +1119,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: milestoneValidateExecute,
   };
 
-  pi.registerTool(milestoneValidateTool);
-  registerAlias(pi, milestoneValidateTool, "gsd_milestone_validate", "gsd_validate_milestone");
+  registerWorkflowTool(pi, milestoneValidateTool);
 
   // ─── gsd_replan_slice (gsd_slice_replan alias) ─────────────────────────
 
@@ -1172,8 +1169,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: replanSliceExecute,
   };
 
-  pi.registerTool(replanSliceTool);
-  registerAlias(pi, replanSliceTool, "gsd_slice_replan", "gsd_replan_slice");
+  registerWorkflowTool(pi, replanSliceTool);
 
   // ─── gsd_reassess_roadmap (gsd_roadmap_reassess alias) ─────────────────
 
@@ -1231,8 +1227,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: reassessRoadmapExecute,
   };
 
-  pi.registerTool(reassessRoadmapTool);
-  registerAlias(pi, reassessRoadmapTool, "gsd_roadmap_reassess", "gsd_reassess_roadmap");
+  registerWorkflowTool(pi, reassessRoadmapTool);
 
   // ─── gsd_task_reopen (gsd_reopen_task alias) ───────────────────────────
   // Single-writer v3, Stream 3: reversibility tools for closed units.
@@ -1299,8 +1294,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: reopenTaskExecute,
   };
 
-  pi.registerTool(reopenTaskTool);
-  registerAlias(pi, reopenTaskTool, "gsd_reopen_task", "gsd_task_reopen");
+  registerWorkflowTool(pi, reopenTaskTool);
 
   // ─── gsd_slice_reopen (gsd_reopen_slice alias) ─────────────────────────
 
@@ -1366,8 +1360,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: reopenSliceExecute,
   };
 
-  pi.registerTool(reopenSliceTool);
-  registerAlias(pi, reopenSliceTool, "gsd_reopen_slice", "gsd_slice_reopen");
+  registerWorkflowTool(pi, reopenSliceTool);
 
   // ─── gsd_milestone_reopen (gsd_reopen_milestone alias) ─────────────────
 
@@ -1431,8 +1424,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     execute: reopenMilestoneExecute,
   };
 
-  pi.registerTool(reopenMilestoneTool);
-  registerAlias(pi, reopenMilestoneTool, "gsd_reopen_milestone", "gsd_milestone_reopen");
+  registerWorkflowTool(pi, reopenMilestoneTool);
 
   // ─── gsd_save_gate_result ──────────────────────────────────────────────
 
@@ -1500,5 +1492,5 @@ export function registerDbTools(pi: ExtensionAPI): void {
     },
   };
 
-  pi.registerTool(saveGateResultTool);
+  registerWorkflowTool(pi, saveGateResultTool);
 }

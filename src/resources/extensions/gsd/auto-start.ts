@@ -66,7 +66,13 @@ import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
-import { isDbAvailable, getMilestone, getAllMilestones, insertMilestone, openDatabase, getDbStatus, updateMilestoneStatus } from "./gsd-db.js";
+import { isDbAvailable, getMilestone, getAllMilestones, insertMilestone, updateMilestoneStatus } from "./gsd-db.js";
+import {
+  getWorkflowDatabaseStatus,
+  openExistingWorkflowDatabase,
+  openWorkflowDatabase,
+  resolveProjectRootDbPath,
+} from "./db-workspace.js";
 import { isClosedStatus } from "./status-guards.js";
 import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 import { extractVerdict } from "./verdict-parser.js";
@@ -92,7 +98,6 @@ import {
 import { join } from "node:path";
 import { sep as pathSep } from "node:path";
 
-import { resolveProjectRootDbPath } from "./bootstrap/dynamic-tools.js";
 import { validateDirectory } from "./validate-directory.js";
 import {
   isCustomProvider,
@@ -150,10 +155,9 @@ export async function openProjectDbIfPresent(basePath: string): Promise<void> {
   const gsdDbPath = resolveProjectRootDbPath(basePath);
   if (!existsSync(gsdDbPath) || isDbAvailable()) return;
 
-  try {
-    openDatabase(gsdDbPath);
-  } catch (err) {
-    logWarning("engine", `gsd-db: failed to open existing database: ${err instanceof Error ? err.message : String(err)}`);
+  const result = openExistingWorkflowDatabase(basePath);
+  if (!result.ok && result.reason === "open-failed") {
+    logWarning("engine", `gsd-db: failed to open existing database: ${result.error?.message ?? "open failed"}`);
   }
 }
 
@@ -1673,21 +1677,14 @@ export async function bootstrapAutoSession(
 
     // ── DB lifecycle ──
     const gsdDbPath = resolveProjectRootDbPath(s.basePath);
-    const gsdDirPath = join(s.basePath, ".gsd");
-    if (existsSync(gsdDirPath) && !existsSync(gsdDbPath)) {
-      try {
-        const { openDatabase: openDb } = await import("./gsd-db.js");
-        openDb(gsdDbPath);
-      } catch (err) {
-        logError("engine", `failed to initialize project database: ${(err as Error).message}`);
-      }
+    const initialDbOpen = openWorkflowDatabase(s.basePath);
+    if (!initialDbOpen.ok && initialDbOpen.reason === "open-failed") {
+      logError("engine", `failed to initialize project database: ${initialDbOpen.error?.message ?? "open failed"}`);
     }
     if (_shouldAbortBootstrapForUnavailableDbForTest(gsdDbPath, isDbAvailable())) {
-      try {
-        const { openDatabase: openDb } = await import("./gsd-db.js");
-        openDb(gsdDbPath);
-      } catch (err) {
-        logError("engine", `failed to open existing database: ${(err as Error).message}`);
+      const retryDbOpen = openWorkflowDatabase(s.basePath);
+      if (!retryDbOpen.ok && retryDbOpen.reason === "open-failed") {
+        logError("engine", `failed to open existing database: ${retryDbOpen.error?.message ?? "open failed"}`);
       }
     }
 
@@ -1697,7 +1694,7 @@ export async function bootstrapAutoSession(
     // call returns "db_unavailable", triggering artifact-retry which
     // re-dispatches the same task — producing an infinite loop (#2419).
     if (existsSync(gsdDbPath) && !isDbAvailable()) {
-      const dbStatus = getDbStatus();
+      const dbStatus = getWorkflowDatabaseStatus();
       const phaseHint = dbStatus.lastPhase === "open"
         ? "The database file could not be opened"
         : dbStatus.lastPhase === "initSchema"

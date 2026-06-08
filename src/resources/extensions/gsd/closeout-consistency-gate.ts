@@ -2,15 +2,17 @@
 // File Purpose: Shared DB-backed guard for milestone closeout finalization.
 
 import {
-  getDbPath,
   getLatestAssessmentByScope,
   getMilestone,
   getMilestoneSlices,
   getPendingGates,
   getSliceTasks,
   isDbAvailable,
-  refreshOpenDatabaseFromDisk,
 } from "./gsd-db.js";
+import {
+  getWorkflowDatabasePath,
+  refreshWorkflowDatabaseFromDisk,
+} from "./db-workspace.js";
 import { isClosedStatus } from "./status-guards.js";
 
 export const CLOSEOUT_CONSISTENCY_BLOCKED_REASON = "closeout-consistency-blocked";
@@ -63,7 +65,7 @@ export function checkCloseoutConsistencyGate(
     );
   }
 
-  if (options.refreshFromDisk && isFileBackedDbPath(getDbPath()) && !refreshOpenDatabaseFromDisk()) {
+  if (options.refreshFromDisk && isFileBackedDbPath(getWorkflowDatabasePath()) && !refreshWorkflowDatabaseFromDisk()) {
     return blocked(
       "db-refresh-failed",
       `Closeout consistency blocked for ${milestoneId}: canonical DB refresh failed.`,

@@ -3,7 +3,7 @@
 /**
  * auto/loop.ts — Main auto-mode execution loop.
  *
- * Iterates: derive → dispatch → guards → runUnit → finalize → repeat.
+ * Iterates: orchestration.advance → guards → runUnit → finalize → repeat.
  * Exits when s.active becomes false or a terminal condition is reached.
  *
  * Imports from: auto/types, auto/resolve, auto/phases
@@ -24,13 +24,7 @@ import {
   type IterationData,
 } from "./types.js";
 import { _clearCurrentResolve } from "./resolve.js";
-import {
-  runPreDispatch,
-  runDispatch,
-  runGuards,
-  runFinalize,
-  STUCK_WINDOW_SIZE,
-} from "./phases.js";
+import { runGuards, runFinalize, STUCK_WINDOW_SIZE } from "./phases.js";
 import { debugLog } from "../debug-logger.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
@@ -158,6 +152,8 @@ function resolveCompletionStopFromState(
 // tolerates — same behavior as a fresh session.
 const STUCK_RECOVERY_ATTEMPTS_KEY = "stuck_recovery_attempts";
 const MAX_CONSECUTIVE_ALREADY_ACTIVE_SKIPS = 3;
+const ORCHESTRATION_MISSING_REASON =
+  "Auto Orchestration Module is not wired; cannot dispatch built-in GSD Unit.";
 
 function stableStuckStateScopeId(s: AutoSession): string {
   return normalizeRealPath(s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath));
@@ -353,9 +349,9 @@ function closeOutCrashedUnit(s: AutoSession, iterData: IterationData, err: unkno
 }
 
 /**
- * Main auto-mode execution loop. Iterates: derive → dispatch → guards →
- * runUnit → finalize → repeat. Exits when s.active becomes false or a
- * terminal condition is reached.
+ * Main auto-mode execution loop. Iterates: orchestration.advance → guards →
+ * runUnit → finalize → repeat. Exits when s.active becomes false or a terminal
+ * condition is reached.
  *
  * This is the linear replacement for the recursive
  * dispatchNextUnit → resolveAgentEnd → dispatchNextUnit chain.
@@ -572,10 +568,9 @@ export async function autoLoop(
       let iterData: IterationData;
 
       // ── Custom engine path ──────────────────────────────────────────────
-      // When activeEngineId is a non-dev value, bypass runPreDispatch and
-      // runDispatch entirely — the custom engine drives its own state via
-      // GRAPH.yaml. Shares runGuards and runUnitPhase with the dev path.
-      // After unit execution, verifies then reconciles via the engine layer.
+      // When activeEngineId is a non-dev value, the custom engine drives its own
+      // state via GRAPH.yaml. It shares guards and Unit execution with the dev
+      // path, then verifies and reconciles via the engine layer.
       //
       // GSD_ENGINE_BYPASS=1 skips the engine layer entirely — falls through
       // to the dev path below.
@@ -656,7 +651,7 @@ export async function autoLoop(
         observedUnitType = iterData.unitType;
         observedUnitId = iterData.unitId;
 
-        // ── Progress widget (mirrors dev path in runDispatch) ──
+        // ── Progress widget (mirrors the dev path) ──
         deps.updateProgressWidget(ctx, iterData.unitType, iterData.unitId, iterData.state);
 
         // ── Guards (shared with dev path) ──
@@ -880,6 +875,8 @@ export async function autoLoop(
               await deps.pauseAuto(ctx, pi, {
                 message: orchestrationResult.reason,
                 category: "unknown",
+              }, {
+                expectedCurrentUnit: null,
               });
               finishTurn("paused", "manual-attention", "orchestration-blocked");
             } else {
@@ -894,8 +891,20 @@ export async function autoLoop(
             break;
           }
 
+          if (orchestrationResult.kind === "skipped") {
+            s.pendingOrchestrationDispatch = null;
+            emitIterationEnd({ skipped: true });
+            completeIteration();
+            finishTurn("skipped");
+            continue;
+          }
+
           if (orchestrationResult.kind === "paused") {
             s.pendingOrchestrationDispatch = null;
+            finishIncompleteIteration({
+              status: "paused",
+              reason: orchestrationResult.reason,
+            });
             finishTurn("skipped");
             continue;
           }
@@ -998,54 +1007,37 @@ export async function autoLoop(
           });
           observedUnitType = iterData.unitType;
           observedUnitId = iterData.unitId;
-        } else {
-          const preDispatchResult = await runPreDispatch(ic, loopState);
-          phaseReporter.report("pre-dispatch", preDispatchResult.action);
-          if (preDispatchResult.action === "break") {
-            finishTurn("stopped", "manual-attention", "pre-dispatch-break");
+
+          const guardMilestoneId = iterData.mid ?? s.currentMilestoneId ?? "workflow";
+          const guardsResult = await runGuards(ic, guardMilestoneId);
+          phaseReporter.report("guard", guardsResult.action, {
+            unitType: iterData.unitType,
+            unitId: iterData.unitId,
+          });
+          if (guardsResult.action === "break") {
+            finishTurn("stopped", "manual-attention", "guard-break");
             finishIncompleteIteration({
               status: "stopped",
-              reason: "pre-dispatch-break",
+              reason: "guard-break",
+              unitType: iterData.unitType,
+              unitId: iterData.unitId,
               failureClass: "manual-attention",
             });
             break;
           }
-          if (preDispatchResult.action === "continue") {
-            emitIterationEnd({ skipped: true });
-            completeIteration();
-            finishTurn("skipped");
-            continue;
-          }
-          if (preDispatchResult.action === "retry") {
-            finishTurn("retry", "execution", preDispatchResult.reason);
-            continue;
-          }
-          const preData = preDispatchResult.data;
-          const guardsResult = await runGuards(ic, preData.mid);
-          phaseReporter.report("guard", guardsResult.action);
-          if (guardsResult.action === "break") {
-            finishTurn("stopped", "manual-attention", "guard-break");
-            break;
-          }
-          const dispatchResult = await runDispatch(ic, preData, loopState);
-          phaseReporter.report("dispatch", dispatchResult.action);
-          if (dispatchResult.action === "break") {
-            finishTurn("stopped", "manual-attention", "dispatch-break");
-            break;
-          }
-          if (dispatchResult.action === "continue") {
-            emitIterationEnd({ skipped: true });
-            completeIteration();
-            finishTurn("skipped");
-            continue;
-          }
-          if (dispatchResult.action === "retry") {
-            finishTurn("retry", "execution", dispatchResult.reason);
-            continue;
-          }
-          iterData = dispatchResult.data;
-          observedUnitType = iterData.unitType;
-          observedUnitId = iterData.unitId;
+        } else {
+          s.pendingOrchestrationDispatch = null;
+          await deps.pauseAuto(ctx, pi, {
+            message: ORCHESTRATION_MISSING_REASON,
+            category: "unknown",
+          });
+          finishTurn("paused", "manual-attention", "orchestration-missing");
+          finishIncompleteIteration({
+            status: "paused",
+            reason: ORCHESTRATION_MISSING_REASON,
+            failureClass: "manual-attention",
+          });
+          break;
         }
       } else {
         iterData = await buildSidecarIterationData({

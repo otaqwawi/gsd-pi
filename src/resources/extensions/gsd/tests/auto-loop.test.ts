@@ -23,11 +23,12 @@ import {
 import { runUnit, shouldDeferUnitFailsafeTimeout } from "../auto/run-unit.js";
 import { scheduleAutoWakeup, _resetAutoWakeupsForTest } from "../auto/schedule-wakeup.js";
 import { writeUnitRuntimeRecord, readUnitRuntimeRecord } from "../unit-runtime.js";
-import { autoLoop } from "../auto/loop.js";
-import { runDispatch, runUnitPhase } from "../auto/phases.js";
+import { autoLoop as rawAutoLoop } from "../auto/loop.js";
+import { runPreDispatch, runDispatch, runUnitPhase } from "../auto/phases.js";
 import { detectStuck } from "../auto/detect-stuck.js";
-import type { UnitResult, AgentEndEvent } from "../auto/types.js";
+import type { UnitResult, AgentEndEvent, LoopState } from "../auto/types.js";
 import type { LoopDeps } from "../auto/loop-deps.js";
+import type { AutoAdvanceResult, AutoOrchestrationModule, AutoStatus, UnitRef } from "../auto/contracts.js";
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
@@ -39,6 +40,17 @@ import { setRuntimeKv, getRuntimeKv } from "../db/runtime-kv.js";
 import { SourceObservationStore } from "../source-observations.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const ORCHESTRATION_MISSING_REASON =
+  "Auto Orchestration Module is not wired; cannot dispatch built-in GSD Unit.";
+
+type CapturedAutoSideEffects<T> = {
+  result: T;
+  stopped: boolean;
+  stoppedReason?: string;
+  paused: boolean;
+  pausedReason?: string;
+};
 
 function makeEvent(
   messages: unknown[] = [{ role: "assistant" }],
@@ -65,6 +77,195 @@ async function waitForMicrotasks(
     }
   }
   assert.fail(`Timed out waiting for ${label}`);
+}
+
+function makeLoopState(): LoopState {
+  return {
+    recentUnits: [],
+    stuckRecoveryAttempts: 0,
+    consecutiveFinalizeTimeouts: 0,
+    consecutiveDispatchCount: new Map<string, number>(),
+    lastDispatchedKey: null,
+    lastDispatchPhase: null,
+  };
+}
+
+function createLoopTestOrchestration(
+  ctx: any,
+  pi: any,
+  s: any,
+  deps: LoopDeps,
+): AutoOrchestrationModule {
+  // Production auto.ts wires the real Auto Orchestration Module before entering
+  // autoLoop. These loop-mechanics tests keep their LoopDeps fixtures by
+  // adapting the old phase helpers to the public orchestration Interface.
+  const loopState = makeLoopState();
+  const status: AutoStatus = { phase: "running", transitionCount: 0 };
+  let iteration = 0;
+  let seq = 0;
+
+  function nextSeq(): number {
+    return ++seq;
+  }
+
+  function clearActiveUnit(): void {
+    status.activeUnit = undefined;
+  }
+
+  async function captureAutoSideEffects<T>(
+    run: () => Promise<T>,
+  ): Promise<CapturedAutoSideEffects<T>> {
+    const originalStopAuto = deps.stopAuto;
+    const originalPauseAuto = deps.pauseAuto;
+    let stoppedReason: string | undefined;
+    let pausedReason: string | undefined;
+    let stopped = false;
+    let paused = false;
+
+    (deps as any).stopAuto = async (...args: Parameters<LoopDeps["stopAuto"]>) => {
+      stopped = true;
+      stoppedReason = args[2];
+      return originalStopAuto(...args);
+    };
+    (deps as any).pauseAuto = async (...args: Parameters<LoopDeps["pauseAuto"]>) => {
+      paused = true;
+      const context = args[2] as { message?: string } | undefined;
+      pausedReason = context?.message;
+      return originalPauseAuto(...args);
+    };
+
+    try {
+      const result = await run();
+      return { result, stopped, stoppedReason, paused, pausedReason };
+    } finally {
+      (deps as any).stopAuto = originalStopAuto;
+      (deps as any).pauseAuto = originalPauseAuto;
+    }
+  }
+
+  function resultForBreak(
+    reason: string,
+    sideEffects: CapturedAutoSideEffects<unknown>,
+  ): AutoAdvanceResult {
+    clearActiveUnit();
+    status.phase = sideEffects.paused && !sideEffects.stopped ? "paused" : "stopped";
+    status.transitionCount += 1;
+    if (sideEffects.paused && !sideEffects.stopped) {
+      return {
+        kind: "blocked",
+        reason: sideEffects.pausedReason ?? reason,
+        action: "pause",
+      };
+    }
+    return {
+      kind: "stopped",
+      reason: sideEffects.stoppedReason ?? reason,
+    };
+  }
+
+  return {
+    async start() {
+      status.phase = "running";
+      status.transitionCount += 1;
+      return { kind: "started" };
+    },
+    async advance() {
+      iteration += 1;
+      seq = 0;
+      const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
+      const ic = {
+        ctx,
+        pi,
+        s,
+        deps,
+        prefs,
+        iteration,
+        flowId: `loop-test-orchestration-${iteration}`,
+        nextSeq,
+      };
+
+      const preDispatch = await captureAutoSideEffects(() => runPreDispatch(ic, loopState));
+      const preDispatchResult = preDispatch.result;
+      if (preDispatchResult.action === "break") {
+        return resultForBreak(preDispatchResult.reason, preDispatch);
+      }
+      if (preDispatchResult.action === "continue") {
+        return { kind: "skipped", reason: "pre-dispatch-skip" };
+      }
+      if (preDispatchResult.action === "retry") {
+        return { kind: "paused", reason: preDispatchResult.reason };
+      }
+
+      const dispatch = await captureAutoSideEffects(() =>
+        runDispatch(ic, preDispatchResult.data, loopState),
+      );
+      if (dispatch.result.action === "break") {
+        return resultForBreak(dispatch.result.reason, dispatch);
+      }
+      if (dispatch.result.action === "continue") {
+        return {
+          kind: "skipped",
+          reason: "dispatch-skip",
+          stateSnapshot: preDispatchResult.data.state,
+        };
+      }
+      if (dispatch.result.action === "retry") {
+        return { kind: "paused", reason: dispatch.result.reason };
+      }
+
+      const data = dispatch.result.data;
+      const unit: UnitRef = { unitType: data.unitType, unitId: data.unitId };
+      s.pendingOrchestrationDispatch = {
+        unitType: data.unitType,
+        unitId: data.unitId,
+        prompt: data.prompt,
+        pauseAfterUatDispatch: data.pauseAfterUatDispatch,
+        state: data.state,
+        mid: data.mid,
+        midTitle: data.midTitle,
+      };
+      status.phase = "running";
+      status.activeUnit = unit;
+      status.transitionCount += 1;
+      return { kind: "advanced", unit, stateSnapshot: data.state };
+    },
+    async completeActiveUnit() {
+      clearActiveUnit();
+    },
+    async retryActiveUnit() {
+      clearActiveUnit();
+    },
+    async resume() {
+      status.phase = "running";
+      status.transitionCount += 1;
+      return { kind: "resumed" };
+    },
+    async stop(reason: string) {
+      status.phase = "stopped";
+      clearActiveUnit();
+      status.transitionCount += 1;
+      return { kind: "stopped", reason };
+    },
+    getStatus() {
+      return {
+        ...status,
+        activeUnit: status.activeUnit ? { ...status.activeUnit } : undefined,
+      };
+    },
+  };
+}
+
+async function autoLoop(
+  ctx: any,
+  pi: any,
+  s: any,
+  deps: LoopDeps,
+  options?: Parameters<typeof rawAutoLoop>[4],
+): Promise<void> {
+  if (!s.orchestration) {
+    s.orchestration = createLoopTestOrchestration(ctx, pi, s, deps);
+  }
+  await rawAutoLoop(ctx, pi, s, deps, options);
 }
 
 /**
@@ -1164,6 +1365,34 @@ test("autoLoop exits when s.active is set to false", async (t) => {
   );
 });
 
+test("autoLoop pauses visibly when Auto Orchestration Module is not wired", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  let pauseContext: unknown;
+
+  const deps = makeMockDeps({
+    pauseAuto: async (_ctx, _pi, errorContext) => {
+      pauseContext = errorContext;
+      deps.callLog.push("pauseAuto");
+    },
+  });
+
+  await rawAutoLoop(ctx, pi, s, deps);
+
+  assert.ok(deps.callLog.includes("pauseAuto"), "missing orchestration should pause auto-mode");
+  assert.equal(
+    (pauseContext as { message?: string } | undefined)?.message,
+    ORCHESTRATION_MISSING_REASON,
+  );
+  assert.equal(deps.callLog.includes("deriveState"), false);
+  assert.equal(deps.callLog.includes("resolveDispatch"), false);
+  assert.equal(s.pendingOrchestrationDispatch, null);
+});
+
 test("autoLoop exits on terminal complete state", async (t) => {
   _resetPendingResolve();
 
@@ -1990,10 +2219,14 @@ test("autoLoop retries next iteration when orchestration reports paused", async 
     },
   });
 
+  const journalEvents: Array<{ eventType: string; data?: any }> = [];
   const deps = makeMockDeps({
     resolveDispatch: async () => {
       deps.callLog.push("resolveDispatch");
       throw new Error("legacy resolveDispatch must not run after orchestration paused");
+    },
+    emitJournalEvent: (entry: any) => {
+      journalEvents.push(entry);
     },
   });
 
@@ -2007,6 +2240,11 @@ test("autoLoop retries next iteration when orchestration reports paused", async 
     "orchestration paused must not fall back to legacy dispatch",
   );
   assert.equal(s.pendingOrchestrationDispatch, null, "no orchestration dispatch should remain pending");
+
+  const pausedIterationEnd = journalEvents.find(
+    (e) => e.eventType === "iteration-end" && e.data?.status === "paused",
+  );
+  assert.ok(pausedIterationEnd, "orchestration paused must emit iteration-end to close the iteration journal");
 });
 
 test("autoLoop consumes pending orchestration dispatch without advancing twice", async () => {
@@ -2960,7 +3198,7 @@ test("autoLoop closes journal iteration on pre-dispatch health-gate break", asyn
   assert.equal(deps.callLog.includes("pauseAuto"), true);
   assert.deepEqual(pauseOptions, { expectedCurrentUnit: null });
   assert.ok(
-    journalEvents.some((event) => event.eventType === "iteration-end" && event.data?.reason === "pre-dispatch-break"),
+    journalEvents.some((event) => event.eventType === "iteration-end" && event.data?.reason === "health-gate-failed"),
     "pre-dispatch break must close the started iteration",
   );
 });

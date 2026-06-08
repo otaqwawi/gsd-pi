@@ -4,8 +4,10 @@
 import {
   resolveManifest,
   type ArtifactKey,
+  type ComputedArtifactId,
   type ContextModePolicy,
   type ToolsPolicy,
+  type UnitContextManifest,
 } from "./unit-context-manifest.js";
 import { getRequiredWorkflowToolsForAutoUnit } from "./workflow-mcp.js";
 import { getUnitToolSurfaceContract } from "./unit-tool-contracts.js";
@@ -21,6 +23,7 @@ export interface UnitToolContract {
   requiredWorkflowTools: readonly string[];
   forbiddenWorkflowTools: readonly { name: string; reason: string }[];
   promptObligations: readonly string[];
+  promptContext: UnitPromptContextContract;
   validationRules: readonly string[];
   closeoutTools: readonly string[];
   sourceObservations: UnitSourceObservationContract;
@@ -29,6 +32,22 @@ export interface UnitToolContract {
     excerpt: readonly ArtifactKey[];
     onDemand: readonly ArtifactKey[];
   };
+}
+
+export interface UnitPromptContextContract {
+  unitType: string;
+  contextMode: ContextModePolicy;
+  toolsPolicy: ToolsPolicy;
+  obligations: readonly string[];
+  sourceObservations: UnitSourceObservationContract;
+  artifacts: {
+    inline: readonly ArtifactKey[];
+    excerpt: readonly ArtifactKey[];
+    onDemand: readonly ArtifactKey[];
+    computed: readonly ComputedArtifactId[];
+    prepend: readonly ComputedArtifactId[];
+  };
+  maxSystemPromptChars: number;
 }
 
 export type UnitSourceObservationContract =
@@ -44,6 +63,22 @@ export type UnitSourceObservationContract =
 export type ToolContractResult =
   | { ok: true; contract: UnitToolContract }
   | { ok: false; reason: "unknown-unit-type" | "missing-closeout-tool"; detail: string };
+
+export type UnitContextContractResult =
+  | { ok: true; contract: UnitPromptContextContract }
+  | { ok: false; reason: "unknown-unit-type"; detail: string };
+
+export function compileUnitContextContract(unitType: string): UnitContextContractResult {
+  const manifest = resolveManifest(unitType);
+  if (!manifest) {
+    return {
+      ok: false,
+      reason: "unknown-unit-type",
+      detail: `No Unit manifest is registered for ${unitType}`,
+    };
+  }
+  return { ok: true, contract: buildPromptContextContract(unitType, manifest) };
+}
 
 export function compileUnitToolContract(unitType: string): ToolContractResult {
   const manifest = resolveManifest(unitType);
@@ -71,6 +106,8 @@ export function compileUnitToolContract(unitType: string): ToolContractResult {
     };
   }
 
+  const promptContext = buildPromptContextContract(unitType, manifest);
+
   return {
     ok: true,
     contract: {
@@ -79,10 +116,8 @@ export function compileUnitToolContract(unitType: string): ToolContractResult {
       toolsPolicy: manifest.tools,
       requiredWorkflowTools,
       forbiddenWorkflowTools,
-      promptObligations: [
-        `context-mode:${manifest.contextMode}`,
-        `tools-policy:${manifest.tools.mode}`,
-      ],
+      promptObligations: promptContext.obligations,
+      promptContext,
       validationRules: [
         "unit-manifest-present",
         "workflow-tool-surface-present",
@@ -90,14 +125,57 @@ export function compileUnitToolContract(unitType: string): ToolContractResult {
         ...(unitType === "execute-task" ? ["source-observation-contract-present"] : []),
       ],
       closeoutTools,
-      sourceObservations: sourceObservationContractForUnit(unitType),
+      sourceObservations: promptContext.sourceObservations,
       artifacts: {
-        inline: manifest.artifacts.inline,
-        excerpt: manifest.artifacts.excerpt,
-        onDemand: manifest.artifacts.onDemand,
+        inline: promptContext.artifacts.inline,
+        excerpt: promptContext.artifacts.excerpt,
+        onDemand: promptContext.artifacts.onDemand,
       },
     },
   };
+}
+
+function buildPromptContextContract(
+  unitType: string,
+  manifest: UnitContextManifest,
+): UnitPromptContextContract {
+  const sourceObservations = sourceObservationContractForUnit(unitType);
+  return {
+    unitType,
+    contextMode: manifest.contextMode,
+    toolsPolicy: manifest.tools,
+    obligations: promptContextObligations(manifest, sourceObservations),
+    sourceObservations,
+    artifacts: {
+      inline: manifest.artifacts.inline,
+      excerpt: manifest.artifacts.excerpt,
+      onDemand: manifest.artifacts.onDemand,
+      computed: manifest.artifacts.computed ?? [],
+      prepend: manifest.prepend ?? [],
+    },
+    maxSystemPromptChars: manifest.maxSystemPromptChars,
+  };
+}
+
+function promptContextObligations(
+  manifest: UnitContextManifest,
+  sourceObservations: UnitSourceObservationContract,
+): string[] {
+  const obligations = [
+    `context-mode:${manifest.contextMode}`,
+    `tools-policy:${manifest.tools.mode}`,
+    artifactObligation("context-inline", manifest.artifacts.inline),
+    artifactObligation("context-excerpt", manifest.artifacts.excerpt),
+    artifactObligation("context-on-demand", manifest.artifacts.onDemand),
+  ];
+  if (sourceObservations.mode !== "none") {
+    obligations.push(`source-observations:${sourceObservations.mode}`);
+  }
+  return obligations;
+}
+
+function artifactObligation(label: string, artifacts: readonly ArtifactKey[]): string {
+  return `${label}:${artifacts.length > 0 ? artifacts.join(",") : "none"}`;
 }
 
 function sourceObservationContractForUnit(unitType: string): UnitSourceObservationContract {

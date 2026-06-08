@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 
 import { ensureDbOpen } from "../bootstrap/dynamic-tools.js";
 import { readCrashLock, isLockProcessAlive } from "../crash-recovery.js";
-import { closeDatabase } from "../gsd-db.js";
+import { closeWorkflowDatabase } from "../db-workspace.js";
 import { readPausedSessionMetadata } from "../interrupted-session.js";
 import { gsdRoot } from "../paths.js";
 import type { MigrationPreview } from "./writer.js";
@@ -144,6 +144,6 @@ export async function assertMigrationTargetAvailable(targetRoot: string): Promis
       );
     }
   } finally {
-    closeDatabase();
+    closeWorkflowDatabase();
   }
 }

@@ -28,10 +28,12 @@ import {
   getMilestone,
   getMilestoneSlices,
   getSliceTasks,
-  closeDatabase,
-  openDatabase,
-  getDbPath,
 } from "./gsd-db.js";
+import {
+  closeWorkflowDatabase,
+  getWorkflowDatabasePath,
+  openWorkflowDatabasePath,
+} from "./db-workspace.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { execFileSync } from "node:child_process";
 import { gsdRoot, resolveGsdPathContract } from "./paths.js";
@@ -1782,10 +1784,10 @@ export function mergeMilestoneToMain(
     const worktreeDbPath = join(contract.worktreeGsd ?? join(worktreeCwd, ".gsd"), "gsd.db");
     const mainDbPath = contract.projectDb;
     try {
-      const activeDbPath = getDbPath();
+      const activeDbPath = getWorkflowDatabasePath();
       if (activeDbPath && _shouldReconcileWorktreeDb(activeDbPath, mainDbPath)) {
-        closeDatabase();
-        if (!openDatabase(mainDbPath)) {
+        closeWorkflowDatabase();
+        if (!openWorkflowDatabasePath(mainDbPath)) {
           throw new Error(`cannot open project DB at ${mainDbPath}`);
         }
       }
@@ -2127,10 +2129,10 @@ export function mergeMilestoneToMain(
   // stashing so Windows releases the handles; reopen after. No-op on
   // POSIX, where advisory locks don't block git.
   const needsDbCycle = process.platform === "win32" && isDbAvailable();
-  const dbPathToReopen = needsDbCycle ? getDbPath() : null;
+  const dbPathToReopen = needsDbCycle ? getWorkflowDatabasePath() : null;
   if (needsDbCycle) {
     try {
-      closeDatabase();
+      closeWorkflowDatabase();
     } catch (err) {
       logWarning("worktree", `pre-stash db close failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -2180,7 +2182,7 @@ export function mergeMilestoneToMain(
     : nativeMergeSquash(originalBasePath_, milestoneBranch);
   if (needsDbCycle && dbPathToReopen) {
     try {
-      openDatabase(dbPathToReopen);
+      openWorkflowDatabasePath(dbPathToReopen);
     } catch (err) {
       logWarning("worktree", `post-merge db reopen failed: ${err instanceof Error ? err.message : String(err)}`);
     }

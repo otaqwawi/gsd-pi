@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { classifyFailure } from "../recovery-classification.js";
 import { reconcileBeforeDispatch } from "../state-reconciliation.js";
-import { compileUnitToolContract } from "../tool-contract.js";
+import { compileUnitContextContract, compileUnitToolContract } from "../tool-contract.js";
 import { shouldBlockAutoUnitToolCall } from "../auto-unit-tool-scope.js";
 import type { GSDState } from "../types.js";
 
@@ -68,6 +68,16 @@ test("Tool Contract compiles known Unit prompt and tool policy", () => {
   assert.equal(result.ok && result.contract.toolsPolicy.mode, "all");
   assert.ok(result.ok && result.contract.validationRules.includes("closeout-tool-present"));
   assert.ok(result.ok && result.contract.validationRules.includes("source-observation-contract-present"));
+  assert.deepEqual(result.ok && result.contract.promptContext.artifacts.inline, [
+    "task-plan",
+    "slice-plan",
+    "prior-task-summaries",
+    "templates",
+  ]);
+  assert.deepEqual(result.ok && result.contract.promptContext.artifacts.onDemand, ["slice-research"]);
+  assert.ok(result.ok && result.contract.promptObligations.includes("context-inline:task-plan,slice-plan,prior-task-summaries,templates"));
+  assert.ok(result.ok && result.contract.promptObligations.includes("context-on-demand:slice-research"));
+  assert.ok(result.ok && result.contract.promptObligations.includes("source-observations:whole-file-active-unit"));
   assert.deepEqual(result.ok && result.contract.sourceObservations, {
     mode: "whole-file-active-unit",
     seedFields: ["task.files", "task.inputs"],
@@ -75,6 +85,20 @@ test("Tool Contract compiles known Unit prompt and tool policy", () => {
     maxBytes: 50 * 1024,
     maxLines: 2000,
   });
+});
+
+test("Unit Context Contract exposes prompt context without workflow tool surface", () => {
+  const result = compileUnitContextContract("execute-task");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.contract.unitType, "execute-task");
+  assert.equal(result.ok && result.contract.contextMode, "execution");
+  assert.equal(result.ok && result.contract.toolsPolicy.mode, "all");
+  assert.deepEqual(result.ok && result.contract.artifacts.excerpt, []);
+  assert.deepEqual(result.ok && result.contract.artifacts.computed, []);
+  assert.deepEqual(result.ok && result.contract.artifacts.prepend, []);
+  assert.equal(result.ok && result.contract.maxSystemPromptChars, 1_500_000);
+  assert.equal(result.ok && result.contract.sourceObservations.mode, "whole-file-active-unit");
 });
 
 test("Tool Contract records high-risk cross-phase tool boundaries without single-owning every tool", () => {
