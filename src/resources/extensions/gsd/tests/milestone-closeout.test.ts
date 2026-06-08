@@ -55,6 +55,31 @@ test("isMilestoneCloseoutSettled requires DB closed and summary artifact", async
   assert.equal(settled, true);
 });
 
+test("isMilestoneCloseoutSettled accepts summary artifacts in a live milestone worktree", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-milestone-closeout-worktree-"));
+  tmpDirs.push(base);
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Done", status: "complete" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Done Slice", status: "complete" });
+  insertAssessment({
+    path: "milestones/M001/M001-VALIDATION.md",
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "verdict: pass",
+  });
+
+  const worktreeRoot = join(base, ".gsd", "worktrees", "M001");
+  const milestoneDir = join(worktreeRoot, ".gsd", "milestones", "M001");
+  mkdirSync(milestoneDir, { recursive: true });
+  writeFileSync(join(worktreeRoot, ".git"), `gitdir: ${join(base, ".git", "worktrees", "M001")}\n`);
+  writeFileSync(join(milestoneDir, "M001-SUMMARY.md"), "# Milestone Summary\n");
+
+  const settled = await isMilestoneCloseoutSettled("M001", base);
+  assert.equal(settled, true);
+});
+
 test("isMilestoneCloseoutSettled returns false when summary artifact is missing", async () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-milestone-closeout-missing-"));
   tmpDirs.push(base);

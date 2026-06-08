@@ -19,11 +19,10 @@ import {
   insertAssessment,
   getMilestoneSlices,
   getMilestone,
-  getArtifact,
 } from "../gsd-db.js";
-import { gsdProjectionRoot, clearPathCache, resolveSliceFile } from "../paths.js";
+import { gsdProjectionRoot, clearPathCache } from "../paths.js";
 import { resolveCanonicalMilestoneRoot } from "../worktree-manager.js";
-import { saveFile, clearParseCache, loadFile } from "../files.js";
+import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
 import { VALIDATION_VERDICTS, isValidMilestoneVerdict } from "../verdict-parser.js";
 import { insertMilestoneValidationGates } from "../milestone-validation-gates.js";
@@ -31,7 +30,10 @@ import { logWarning } from "../workflow-logger.js";
 import { UokGateRunner } from "../uok/gate-runner.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { resolveUokFlags } from "../uok/flags.js";
-import { compactTextParts, hasBrowserEvidenceText, hasBrowserRequiredText } from "../browser-evidence.js";
+import {
+  applyBrowserEvidenceGate,
+  browserEvidenceGateRequiresAttention,
+} from "../milestone-validation-evidence.js";
 
 export interface ValidateMilestoneParams {
   milestoneId: string;
@@ -76,86 +78,6 @@ function getRequiredVerificationClasses(milestoneId: string): string[] {
   if (!isVerificationNotApplicable(milestone.verification_operational)) required.push("Operational");
   if (!isVerificationNotApplicable(milestone.verification_uat)) required.push("UAT");
   return required;
-}
-
-function hasRuntimeExecutableUatEvidenceText(text: string): boolean {
-  if (!/\buatType:\s*runtime-executable\b/i.test(text)) return false;
-  if (!/\bverdict:\s*PASS\b/i.test(text)) return false;
-  return /^\|\s*[^|\n]+\s*\|\s*runtime\s*\|\s*PASS\s*\|[^|\n]*\bgsd_uat_exec\b/mi.test(text);
-}
-
-async function browserEvidenceGateRequiresAttention(
-  params: ValidateMilestoneParams,
-  basePath: string,
-): Promise<boolean> {
-  if (params.verdict !== "pass") return false;
-
-  const milestone = getMilestone(params.milestoneId);
-  const slices = getMilestoneSlices(params.milestoneId);
-  const requirementText = compactTextParts([
-    milestone?.vision,
-    milestone?.success_criteria,
-    milestone?.verification_uat,
-    params.successCriteriaChecklist,
-    params.verificationClasses,
-    ...slices.flatMap((slice) => [
-      slice.demo,
-      slice.goal,
-      slice.success_criteria,
-    ]),
-  ]);
-  if (!hasBrowserRequiredText(requirementText)) return false;
-
-  // Collect per-slice evidence so the runtime bypass is checked independently
-  // for each slice. Concatenating all slices before checking would allow runtime
-  // evidence from one slice to cover another slice's browser requirements.
-  const sliceEvidencePairs: Array<{ sliceRequirementText: string; evidenceText: string }> = [];
-  for (const slice of slices) {
-    const chunks: string[] = [];
-    const artifactPath = `milestones/${params.milestoneId}/slices/${slice.id}/${slice.id}-ASSESSMENT.md`;
-    const artifact = getArtifact(artifactPath);
-    if (artifact?.full_content) chunks.push(artifact.full_content);
-    const assessmentPath = resolveSliceFile(basePath, params.milestoneId, slice.id, "ASSESSMENT");
-    const assessmentContent = assessmentPath ? await loadFile(assessmentPath) : null;
-    if (assessmentContent) chunks.push(assessmentContent);
-    sliceEvidencePairs.push({
-      sliceRequirementText: compactTextParts([slice.demo, slice.goal, slice.success_criteria]),
-      evidenceText: chunks.join("\n\n"),
-    });
-  }
-  const persistedEvidence = sliceEvidencePairs.map((s) => s.evidenceText).join("\n\n");
-
-  // Runtime bypass: each slice whose own requirement text has browser-observable
-  // criteria must have its own runtime-executable UAT evidence. When no individual
-  // slice has slice-level browser requirements (e.g., they come from milestone-level
-  // fields only), fall back to checking whether any slice has runtime evidence.
-  const browserRequiringSlices = sliceEvidencePairs.filter((s) =>
-    hasBrowserRequiredText(s.sliceRequirementText),
-  );
-  const runtimeBypasses =
-    browserRequiringSlices.length > 0
-      ? browserRequiringSlices.every((s) => hasRuntimeExecutableUatEvidenceText(s.evidenceText))
-      : sliceEvidencePairs.some((s) => hasRuntimeExecutableUatEvidenceText(s.evidenceText));
-  if (runtimeBypasses) return false;
-
-  const validationEvidence = compactTextParts([
-    params.successCriteriaChecklist,
-    params.verificationClasses,
-    params.verdictRationale,
-    params.remediationPlan,
-  ]);
-  return !hasBrowserEvidenceText(`${persistedEvidence}\n\n${validationEvidence}`);
-}
-
-function applyBrowserEvidenceGate(params: ValidateMilestoneParams): ValidateMilestoneParams {
-  const note = "Browser evidence gate: Browser-observable acceptance criteria were detected, but no persisted ASSESSMENT or validation evidence recorded browser actions with assertions. Downgraded from pass to needs-attention.";
-  return {
-    ...params,
-    verdict: "needs-attention",
-    verdictRationale: params.verdictRationale.trim()
-      ? `${params.verdictRationale.trim()}\n\n${note}`
-      : note,
-  };
 }
 
 function renderValidationMarkdown(params: ValidateMilestoneParams): string {

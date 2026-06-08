@@ -25,8 +25,6 @@ import {
   updateSliceStatus,
   insertSlice,
   getMilestone,
-  getMilestoneSlices,
-  getLatestAssessmentByScope,
   updateMilestoneStatus,
   getCompletedMilestoneTaskFileHints,
   getMilestoneCommitAttributionShas,
@@ -72,7 +70,10 @@ import { isGsdWorktreePath } from "./worktree-root.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
-import { checkCloseoutConsistencyGate } from "./closeout-consistency-gate.js";
+import {
+  proveMilestoneCloseout,
+  type CloseoutProofFailureReason,
+} from "./milestone-closeout-proof.js";
 
 // Re-export so existing consumers of auto-recovery.ts keep working.
 export { resolveExpectedArtifactPath, diagnoseExpectedArtifact };
@@ -117,6 +118,19 @@ export type ArtifactRecoveryDbRefreshResult =
   | { ok: true }
   | { ok: false; fatal: boolean; message: string; reason: string };
 
+function closeoutProofRecoveryReason(reason: CloseoutProofFailureReason): string {
+  switch (reason) {
+    case "slice-missing":
+      return "complete-milestone-slices-missing";
+    case "summary-artifact-missing":
+      return "complete-milestone-summary-missing";
+    case "summary-artifact-failed":
+      return "complete-milestone-summary-failed";
+    default:
+      return `complete-milestone-${reason}`;
+  }
+}
+
 export function refreshRecoveryDbForArtifact(
   unitType: string,
   unitId: string,
@@ -156,52 +170,29 @@ export function refreshRecoveryDbForArtifact(
     }
     if (isClosedStatus(milestone.status)) return { ok: true };
 
-    const validation = getLatestAssessmentByScope(mid, "milestone-validation");
-    if (validation?.status !== "pass") {
-      return {
-        ok: false,
-        fatal: true,
-        reason: "complete-milestone-validation-not-pass",
-        message: `Stuck recovery found complete-milestone ${unitId} artifacts, but milestone-validation is "${validation?.status ?? "absent"}" in the DB.`,
-      };
-    }
-
-    const slices = getMilestoneSlices(mid);
-    if (slices.length === 0) {
-      return {
-        ok: false,
-        fatal: true,
-        reason: "complete-milestone-slices-missing",
-        message: `Stuck recovery found complete-milestone ${unitId} artifacts, but no slices exist in the DB.`,
-      };
-    }
-    const openSlice = slices.find((slice) => !isClosedStatus(slice.status));
-    if (openSlice) {
-      return {
-        ok: false,
-        fatal: true,
-        reason: "complete-milestone-slice-open",
-        message: `Stuck recovery found complete-milestone ${unitId} artifacts, but slice ${openSlice.id} is still "${openSlice.status}" in the DB.`,
-      };
-    }
-    for (const slice of slices) {
-      const openTask = getSliceTasks(mid, slice.id).find((task) => !isClosedStatus(task.status));
-      if (openTask) {
+    const artifactBasePath = resolveArtifactVerificationBase(unitId, basePath);
+    const closeoutProof = proveMilestoneCloseout(mid, {
+      allowOpenMilestone: true,
+      summaryArtifactBasePath: artifactBasePath,
+      implementationEvidence: {
+        basePath,
+        requirement: "present",
+      },
+    });
+    if (!closeoutProof.ok) {
+      if (closeoutProof.reason === "implementation-evidence-missing") {
         return {
           ok: false,
           fatal: true,
-          reason: "complete-milestone-task-open",
-          message: `Stuck recovery found complete-milestone ${unitId} artifacts, but task ${slice.id}/${openTask.id} is still "${openTask.status}" in the DB.`,
+          reason: "complete-milestone-implementation-missing",
+          message: `Stuck recovery found complete-milestone ${unitId} artifacts, but implementation evidence is not present.`,
         };
       }
-    }
-
-    if (hasImplementationArtifacts(basePath, mid) !== "present") {
       return {
         ok: false,
         fatal: true,
-        reason: "complete-milestone-implementation-missing",
-        message: `Stuck recovery found complete-milestone ${unitId} artifacts, but implementation evidence is not present.`,
+        reason: closeoutProofRecoveryReason(closeoutProof.reason),
+        message: `Stuck recovery found complete-milestone ${unitId} artifacts, but ${closeoutProof.message}`,
       };
     }
 
@@ -642,14 +633,23 @@ export function verifyExpectedArtifact(
   // A milestone with only .gsd/ plan files and zero implementation code is
   // not genuinely complete — the LLM wrote plan files but skipped actual work.
   if (unitType === "complete-milestone") {
-    const summaryOutcome = classifyMilestoneSummaryContent(readFileSync(absPath, "utf-8"));
-    if (summaryOutcome === "failure") return false;
     const { milestone: mid } = parseUnitId(unitId);
-    if (mid && isDbAvailable()) {
-      const closeoutGate = checkCloseoutConsistencyGate(mid, { refreshFromDisk: true });
-      if (!closeoutGate.ok) return false;
+    if (!mid) return false;
+    const closeoutProof = proveMilestoneCloseout(mid, {
+      refreshFromDisk: true,
+      summaryArtifactBasePath: artifactBase,
+      implementationEvidence: {
+        basePath: base,
+        requirement: "not-absent",
+      },
+    });
+    if (!closeoutProof.ok) {
+      if (!isDbAvailable() && closeoutProof.reason === "db-unavailable") {
+        const summaryOutcome = classifyMilestoneSummaryContent(readFileSync(absPath, "utf-8"));
+        return summaryOutcome !== "failure" && hasImplementationArtifacts(base, mid) !== "absent";
+      }
+      return false;
     }
-    if (hasImplementationArtifacts(base, mid) === "absent") return false;
   }
 
   return true;
