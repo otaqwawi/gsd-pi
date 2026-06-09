@@ -99,6 +99,26 @@ test("messageHasPendingAskUserQuestionsTool detects in-flight structured questio
     }),
     false,
   );
+  // serverToolUse shape (claude-code-cli MCP path) — no externalResult → in-flight
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "serverToolUse", name: "mcp__gsd-workflow__ask_user_questions" },
+      ],
+    }),
+    true,
+  );
+  // serverToolUse shape — externalResult present → completed
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "serverToolUse", name: "ask_user_questions", externalResult: { content: [], isError: false } },
+      ],
+    }),
+    false,
+  );
 });
 
 test("isAwaitingUserInput still triggers on text-block question marks when thinking is also present", () => {

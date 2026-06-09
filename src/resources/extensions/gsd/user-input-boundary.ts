@@ -191,7 +191,7 @@ export function messageHasPendingAskUserQuestionsTool(message: unknown): boolean
   return content.some((block) => {
     if (!block || typeof block !== "object") return false;
     const tool = block as { type?: string; name?: string; externalResult?: unknown };
-    if (tool.type !== "toolCall") return false;
+    if (tool.type !== "toolCall" && tool.type !== "serverToolUse") return false;
     const name = String(tool.name ?? "").toLowerCase();
     if (!name.includes("ask_user_questions")) return false;
     // ToolCall blocks carry no `state` field; completion is signalled by
