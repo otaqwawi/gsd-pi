@@ -113,6 +113,65 @@ test("isRedundantDiscussRestatement: keeps wait ack that adds a new question", (
 	assert.equal(isRedundantDiscussRestatement(prior, next), false);
 });
 
+test("isRedundantDiscussRestatement: keeps holding ack that also asks a new question", () => {
+	const prior = "What do you want to build for M006?";
+	const next = "I'm holding here for your answer. Should we also add offline support?";
+	assert.equal(isRedundantDiscussRestatement(prior, next), false);
+});
+
+test("handleAgentEvent: message_end keeps question segments when final payload mixes questions and wait ack", async () => {
+	initTheme("dark", false);
+	const chatContainer = new Container();
+	const prior = [
+		"Oriented. Here's where things stand.",
+		"1. Where should we take this?",
+		"2. One focused capability, or a polish/utility pass?",
+	].join("\n");
+	const waitAck =
+		"I've asked my two questions above and I'm holding here for your answer - no need for anything else from me until you point M002 in a direction.";
+	function makeMessage(content: any[]): any {
+		return {
+			id: "a-discuss",
+			role: "assistant",
+			provider: "claude-code",
+			model: "claude-opus-4-8",
+			timestamp: 1,
+			stopReason: "stop",
+			content,
+		};
+	}
+	const host = createStreamingHost(chatContainer);
+	host.session.messages = [
+		{ role: "user", content: "start" },
+		{ role: "assistant", content: [{ type: "text", text: "What is your favorite color?" }] },
+	];
+	const first = makeMessage([{ type: "text", text: prior }]);
+
+	await handleAgentEvent(host, { type: "message_start", message: makeMessage([]) } as any);
+	await handleAgentEvent(host, {
+		type: "message_update",
+		message: first,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: prior, partial: first },
+	} as any);
+
+	const replaced = makeMessage([{ type: "text", text: waitAck }]);
+	await handleAgentEvent(host, {
+		type: "message_update",
+		message: replaced,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: waitAck, partial: replaced },
+	} as any);
+
+	const final = makeMessage([
+		{ type: "text", text: prior },
+		{ type: "text", text: waitAck },
+	]);
+	await handleAgentEvent(host, { type: "message_end", message: final } as any);
+
+	const rendered = stripAnsi(chatContainer.render(100).join("\n"));
+	assert.match(rendered, /Where should we take this/);
+	assert.doesNotMatch(rendered, /holding here for your answer/);
+});
+
 test("handleAgentEvent: suppresses redundant holding-here sub-turn after discuss questions", async () => {
 	initTheme("dark", false);
 	const chatContainer = new Container();
