@@ -65,6 +65,48 @@ describe("web-app-uat guidance", () => {
     }
   });
 
+  test("does not mistake a non-playwright e2e script as playwright", () => {
+    const root = mkdtempSync(join(tmpdir(), "gsd-web-uat-"));
+    try {
+      scaffoldProject(root, {
+        dependencies: { react: "19.0.0" },
+        devDependencies: { "@playwright/test": "1.60.0" },
+        scripts: { e2e: "cypress run", dev: "vite" },
+      });
+      // The e2e script runs Cypress, not Playwright — must not be returned
+      assert.equal(findPlaywrightTestScript(root), null);
+      const block = buildWebAppUatGuidanceBlock(root);
+      assert.ok(block);
+      // Playwright dep is present so guidance shows "dependency detected", not "scaffolding"
+      assert.match(block!, /dependency detected/);
+      assert.doesNotMatch(block!, /Playwright scaffolding/);
+      // Falls back to generic npx command because no playwright-named script exists
+      assert.doesNotMatch(block!, /npm run e2e/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("recognises playwright via script value even without a local dependency", () => {
+    const root = mkdtempSync(join(tmpdir(), "gsd-web-uat-"));
+    try {
+      scaffoldProject(root, {
+        dependencies: { next: "15.0.0" },
+        scripts: { "test:e2e": "npx playwright test" },
+      });
+      assert.equal(hasPlaywrightTestDependency(root), false);
+      assert.equal(findPlaywrightTestScript(root), "npm run test:e2e");
+      const block = buildWebAppUatGuidanceBlock(root);
+      assert.ok(block);
+      // Script-based detection should trigger "dependency detected" path, not scaffolding
+      assert.match(block!, /dependency detected/);
+      assert.match(block!, /npm run test:e2e/);
+      assert.doesNotMatch(block!, /Playwright scaffolding/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("detects static sites via index.html", () => {
     const root = mkdtempSync(join(tmpdir(), "gsd-web-uat-"));
     try {

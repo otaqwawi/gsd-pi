@@ -40,7 +40,7 @@ export function findPlaywrightTestScript(projectRoot: string): string | null {
   if (!pkg?.scripts) return null;
   for (const [name, value] of Object.entries(pkg.scripts)) {
     if (typeof value !== "string") continue;
-    if (/\bplaywright\b/.test(value) || name === "test:e2e" || name === "e2e") {
+    if (/\bplaywright\b/.test(value)) {
       return `npm run ${name}`;
     }
   }
@@ -54,8 +54,8 @@ export function findPlaywrightTestScript(projectRoot: string): string | null {
 export function buildWebAppUatGuidanceBlock(projectRoot: string): string | null {
   if (!detectWebApp(projectRoot)) return null;
 
-  const hasPlaywright = hasPlaywrightTestDependency(projectRoot);
   const playwrightScript = findPlaywrightTestScript(projectRoot);
+  const hasPlaywright = hasPlaywrightTestDependency(projectRoot) || playwrightScript !== null;
   const lines = [
     "### Web App UAT (detected)",
     "",
