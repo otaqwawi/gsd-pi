@@ -199,7 +199,7 @@ export function isRedundantDiscussRestatement(priorText: string, newText: string
 function isSubTurnTextReplacement(
 	blocks: Array<any>,
 	rendered: RenderedSegment[],
-): boolean {
+): number | null {
 	for (const seg of rendered) {
 		if (seg.kind !== "text-run") continue;
 		const oldText = (seg.cachedText ?? "").trim();
@@ -207,9 +207,9 @@ function isSubTurnTextReplacement(
 		const newText = getTextFromContentBlocks(blocks, seg.startIndex, seg.endIndex).trim();
 		if (!newText || newText === oldText) continue;
 		// Streaming growth extends prior text; a new sub-turn replaces it wholesale.
-		if (!newText.startsWith(oldText) && !oldText.startsWith(newText)) return true;
+		if (!newText.startsWith(oldText) && !oldText.startsWith(newText)) return seg.startIndex;
 	}
-	return false;
+	return null;
 }
 
 function getTextFromContentBlocks(blocks: Array<any>, startIndex: number, endIndex: number): string {
@@ -765,13 +765,10 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				// components don't get overwritten in place with new sub-turn
 				// content (#4144 regression). Prior sub-turn children stay in
 				// chatContainer as frozen history; new segments append after them.
-				if (
-					contentBlocks.length < lastContentLength
-					|| (
-						contentBlocks.length <= lastContentLength
-						&& isSubTurnTextReplacement(contentBlocks, renderedSegments)
-					)
-				) {
+				const replacedAt = contentBlocks.length <= lastContentLength
+					? isSubTurnTextReplacement(contentBlocks, renderedSegments)
+					: null;
+				if (contentBlocks.length < lastContentLength) {
 					// Accumulate across successive shrinks — overwriting would drop
 					// segments displaced by an earlier shrink, leaving them stranded
 					// in chatContainer once the prune pass finally runs.
@@ -779,6 +776,20 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					renderedSegments = [];
 					lastPinnedText = "";
 					lastProcessedContentIndex = 0;
+				} else if (replacedAt !== null) {
+					// Same-index wholesale replacement: orphan only the replaced
+					// text-run and any text-runs after it. Earlier unchanged text
+					// and tool segments stay in renderedSegments so they are not
+					// re-rendered and duplicated in chatContainer.
+					orphanedSegments = [
+						...orphanedSegments,
+						...renderedSegments.filter((seg) => seg.kind === "text-run" && seg.startIndex >= replacedAt),
+					];
+					renderedSegments = renderedSegments.filter(
+						(seg) => !(seg.kind === "text-run" && seg.startIndex >= replacedAt),
+					);
+					lastPinnedText = "";
+					lastProcessedContentIndex = replacedAt;
 				} else if (lastProcessedContentIndex >= contentBlocks.length) {
 					lastProcessedContentIndex = 0;
 				}
