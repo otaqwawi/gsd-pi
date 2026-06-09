@@ -168,10 +168,34 @@ const DISCUSS_RESTATE_RE =
 const HANDOFF_WAIT_RESTATE_RE =
 	/\b(?:holding\s+(?:here|for)|waiting\s+(?:here|for)|no\s+need\s+for\s+anything\s+else|until\s+you\s+(?:point|tell|let\s+me\s+know|answer|reply)|i(?:'ve| have)\s+asked)\b/i;
 
+function isWaitOnlyQuestionFragment(fragment: string): boolean {
+	return /^(?:i(?:'ve| have)\s+asked\b|(?:i'?m|i am)\s+(?:holding|waiting)\b|no\s+need\s+for\s+anything\s+else\b)/i.test(fragment)
+		&& !/\b(?:should|do you|would you|can we|could we|what|which|how|where|when|who|also|add|include)\b/i.test(fragment);
+}
+
+/** True when text adds a question beyond wait/hold boilerplate. */
+function containsNewSubstantiveQuestion(text: string): boolean {
+	for (let i = 0; i < text.length; i++) {
+		if (text[i] !== "?") continue;
+		const previousBreak = Math.max(
+			text.lastIndexOf("\n", i),
+			text.lastIndexOf(".", i),
+			text.lastIndexOf("!", i),
+			text.lastIndexOf("?", i - 1),
+			-1,
+		);
+		const fragment = text.slice(previousBreak + 1, i + 1).trim();
+		if (fragment.length < 8) continue;
+		if (isWaitOnlyQuestionFragment(fragment)) continue;
+		return true;
+	}
+	return false;
+}
+
 function isHandoffWaitRestatement(next: string): boolean {
 	if (!HANDOFF_WAIT_RESTATE_RE.test(next)) return false;
-	// Any question mark signals substantive new content — keep it regardless of wait language.
-	if (/\?/.test(next)) return false;
+	// Keep follow-ups that add a real question even when they also say holding/waiting.
+	if (containsNewSubstantiveQuestion(next)) return false;
 	// Only classify as a pure wait ack when the text is short; long text likely
 	// contains substantive content alongside incidental wait language.
 	if (next.length > 400) return false;
@@ -301,6 +325,23 @@ export function priorAssistantTextFromSession(
 		}
 	}
 	return undefined;
+}
+
+function shouldSuppressEntireAssistantMessage(
+	message: { content?: Array<any> },
+	sessionMessages: Array<{ role?: string; content?: unknown }>,
+	orphaned: RenderedSegment[],
+): boolean {
+	const textBlocks = (message.content ?? []).filter(
+		(block) => block?.type === "text" && typeof block.text === "string" && block.text.trim(),
+	);
+	if (textBlocks.length !== 1) return false;
+	return shouldSuppressRedundantHandoffText(
+		sessionMessages,
+		textBlocks[0].text,
+		orphaned,
+		[],
+	);
 }
 
 function shouldSuppressRedundantHandoffText(
@@ -1123,11 +1164,10 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							(host.streamingMessage.stopReason === "aborted" || host.streamingMessage.stopReason === "error") &&
 							!hasAssistantToolBlocks(host.streamingMessage)
 						);
-					const suppressRedundantHandoff = shouldSuppressRedundantHandoffText(
+					const suppressRedundantHandoff = shouldSuppressEntireAssistantMessage(
+						host.streamingMessage,
 						host.session.messages,
-						extractAssistantText(host.streamingMessage),
 						orphanedSegments,
-						[],
 					);
 
 					// The final message_end payload can contain additional text/thinking
@@ -1211,15 +1251,12 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							);
 							comp.updateContent(host.streamingMessage);
 							const segmentText = getTextFromContentBlocks(finalBlocks, seg.startIndex, seg.endIndex);
-							if (
-								suppressRedundantHandoff ||
-								shouldSuppressRedundantHandoffText(
-									host.session.messages,
-									segmentText,
-									orphanedSegments,
-									renderedSegments,
-								)
-							) {
+							if (shouldSuppressRedundantHandoffText(
+								host.session.messages,
+								segmentText,
+								orphanedSegments,
+								renderedSegments,
+							)) {
 								continue;
 							}
 							host.chatContainer.addChild(comp);

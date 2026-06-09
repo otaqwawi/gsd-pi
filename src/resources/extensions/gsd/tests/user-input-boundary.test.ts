@@ -78,18 +78,41 @@ test("isAwaitingUserInput does not trigger on thinking-block approval phrases", 
 });
 
 test("messageHasPendingAskUserQuestionsTool detects in-flight structured question tools", () => {
-  // No externalResult → still in-flight
+  // state: "running" with no externalResult → still in-flight
   assert.equal(
     messageHasPendingAskUserQuestionsTool({
       role: "assistant",
       content: [
         { type: "text", text: "Which direction?" },
-        { type: "toolCall", name: "mcp__gsd-workflow__ask_user_questions" },
+        { type: "toolCall", name: "mcp__gsd-workflow__ask_user_questions", state: "running" },
       ],
     }),
     true,
   );
-  // externalResult present → tool call completed, no longer pending
+
+  // no state, no externalResult — streaming block that hasn't completed yet
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "toolCall", name: "ask_user_questions" },
+      ],
+    }),
+    true,
+  );
+
+  // state: "completed" — legacy state-based completion
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "toolCall", name: "ask_user_questions", state: "completed" },
+      ],
+    }),
+    false,
+  );
+
+  // externalResult present — Claude Code signals completion via externalResult, not state
   assert.equal(
     messageHasPendingAskUserQuestionsTool({
       role: "assistant",
@@ -99,6 +122,20 @@ test("messageHasPendingAskUserQuestionsTool detects in-flight structured questio
     }),
     false,
   );
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          name: "ask_user_questions",
+          externalResult: { content: [{ type: "text", text: "answer" }], isError: false },
+        },
+      ],
+    }),
+    false,
+  );
+
   // serverToolUse shape (claude-code-cli MCP path) — no externalResult → in-flight
   assert.equal(
     messageHasPendingAskUserQuestionsTool({

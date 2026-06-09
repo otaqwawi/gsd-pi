@@ -33,6 +33,8 @@ import {
   CANONICAL_WORKFLOW_TOOL_NAMES,
   WORKFLOW_TOOL_ALIAS_NAMES,
   validateProjectDir,
+  _parseWorkflowArgsForTest,
+  _sliceCompleteSchemaForTest,
 } from "./workflow-tools.ts";
 
 function makeTmpBase(): string {
@@ -2217,6 +2219,19 @@ export const executeTaskComplete = async (params, projectDir) => {
     } finally {
       cleanup(base);
     }
+  });
+
+  it("gsd_slice_complete accepts omitted verification at the schema layer", () => {
+    const parsed = _parseWorkflowArgsForTest(_sliceCompleteSchemaForTest, {
+      projectDir: join(tmpdir(), "gsd-slice-complete-schema"),
+      sliceId: "S01",
+      milestoneId: "M001",
+      sliceTitle: "Test slice",
+      oneLiner: "Did the thing",
+      narrative: "We did it step by step.",
+      uatContent: "## UAT\n- [x] Works",
+    });
+    assert.equal(parsed.verification, undefined);
   });
 
   it("gsd_validate_milestone and gsd_milestone_complete work end-to-end", async () => {
