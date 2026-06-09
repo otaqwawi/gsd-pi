@@ -164,6 +164,20 @@ export function textInvitesUserReply(text: string): boolean {
 const DISCUSS_RESTATE_RE =
 	/\b(?:what do you want|what should we|before i can write|context file|placeholder name|need to understand what|what(?:'s| is) (?:on your mind|the next)|help me understand what you want)\b/i;
 
+/** Second sub-turn that only says it is waiting after questions were already asked. */
+const HANDOFF_WAIT_RESTATE_RE =
+	/\b(?:holding\s+(?:here|for)|waiting\s+(?:here|for)|no\s+need\s+for\s+anything\s+else|until\s+you\s+(?:point|tell|let\s+me\s+know|answer|reply)|i(?:'ve| have)\s+asked)\b/i;
+
+function isHandoffWaitRestatement(next: string): boolean {
+	if (!HANDOFF_WAIT_RESTATE_RE.test(next)) return false;
+	// Any question mark signals substantive new content — keep it regardless of wait language.
+	if (/\?/.test(next)) return false;
+	// Only classify as a pure wait ack when the text is short; long text likely
+	// contains substantive content alongside incidental wait language.
+	if (next.length > 400) return false;
+	return true;
+}
+
 /**
  * Claude Code can emit a second text sub-turn that restates the same milestone
  * discuss ask. Drop it when the prior sub-turn already invited a user reply.
@@ -173,9 +187,29 @@ export function isRedundantDiscussRestatement(priorText: string, newText: string
 	const next = newText.trim();
 	if (!prior || !next) return false;
 	if (!textInvitesUserReply(prior)) return false;
-	if (!DISCUSS_RESTATE_RE.test(next)) return false;
+	const isDiscussRestate = DISCUSS_RESTATE_RE.test(next);
+	const isWaitRestate = isHandoffWaitRestatement(next);
+	if (!isDiscussRestate && !isWaitRestate) return false;
+	// Wait acks are gated on length and no-? inside isHandoffWaitRestatement.
+	if (isWaitRestate) return true;
 	if (next.length > prior.length * 1.1) return false;
 	return next.length <= prior.length || next.length < 900;
+}
+
+function isSubTurnTextReplacement(
+	blocks: Array<any>,
+	rendered: RenderedSegment[],
+): number | null {
+	for (const seg of rendered) {
+		if (seg.kind !== "text-run") continue;
+		const oldText = (seg.cachedText ?? "").trim();
+		if (!oldText) continue;
+		const newText = getTextFromContentBlocks(blocks, seg.startIndex, seg.endIndex).trim();
+		if (!newText || newText === oldText) continue;
+		// Streaming growth extends prior text; a new sub-turn replaces it wholesale.
+		if (!newText.startsWith(oldText) && !oldText.startsWith(newText)) return seg.startIndex;
+	}
+	return null;
 }
 
 function getTextFromContentBlocks(blocks: Array<any>, startIndex: number, endIndex: number): string {
@@ -731,6 +765,9 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				// components don't get overwritten in place with new sub-turn
 				// content (#4144 regression). Prior sub-turn children stay in
 				// chatContainer as frozen history; new segments append after them.
+				const replacedAt = contentBlocks.length <= lastContentLength
+					? isSubTurnTextReplacement(contentBlocks, renderedSegments)
+					: null;
 				if (contentBlocks.length < lastContentLength) {
 					// Accumulate across successive shrinks — overwriting would drop
 					// segments displaced by an earlier shrink, leaving them stranded
@@ -739,6 +776,20 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					renderedSegments = [];
 					lastPinnedText = "";
 					lastProcessedContentIndex = 0;
+				} else if (replacedAt !== null) {
+					// Same-index wholesale replacement: orphan only the replaced
+					// text-run and any text-runs after it. Earlier unchanged text
+					// and tool segments stay in renderedSegments so they are not
+					// re-rendered and duplicated in chatContainer.
+					orphanedSegments = [
+						...orphanedSegments,
+						...renderedSegments.filter((seg) => seg.kind === "text-run" && seg.startIndex >= replacedAt),
+					];
+					renderedSegments = renderedSegments.filter(
+						(seg) => !(seg.kind === "text-run" && seg.startIndex >= replacedAt),
+					);
+					lastPinnedText = "";
+					lastProcessedContentIndex = replacedAt;
 				} else if (lastProcessedContentIndex >= contentBlocks.length) {
 					lastProcessedContentIndex = 0;
 				}
