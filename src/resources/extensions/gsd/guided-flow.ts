@@ -1594,8 +1594,9 @@ function isAgentTurnInFlight(ctx: ExtensionCommandContext): boolean {
     if (typeof ctx.isIdle === "function" && !ctx.isIdle()) return true;
     if (typeof ctx.hasPendingMessages === "function" && ctx.hasPendingMessages()) return true;
   } catch {
-    // assertActive() throws on a stale runner context — cannot prove a turn
-    // is in flight, so fall through to the artifact/age staleness signals.
+    // assertActive() throws on a stale runner context; fall through to
+    // artifact/age staleness signals.
+    logWarning("guided", "isAgentTurnInFlight: ctx method threw (stale runner); assuming no turn in flight");
   }
   return false;
 }
