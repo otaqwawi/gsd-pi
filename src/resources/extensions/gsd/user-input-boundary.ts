@@ -191,10 +191,9 @@ export function messageHasPendingAskUserQuestionsTool(message: unknown): boolean
   return content.some((block) => {
     if (!block || typeof block !== "object") return false;
     // Claude Code marks completion by attaching externalResult, not by setting state.
-    // Streaming blocks never carry state, so checking state alone would treat every
-    // completed tool as still pending.
+    // Streaming blocks often carry no state; serverToolUse is the claude-code-cli MCP path.
     const tool = block as { type?: string; name?: string; state?: string; externalResult?: unknown };
-    if (tool.type !== "toolCall") return false;
+    if (tool.type !== "toolCall" && tool.type !== "serverToolUse") return false;
     const name = String(tool.name ?? "").toLowerCase();
     if (!name.includes("ask_user_questions")) return false;
     if (tool.externalResult !== undefined) return false;

@@ -78,7 +78,7 @@ test("isAwaitingUserInput does not trigger on thinking-block approval phrases", 
 });
 
 test("messageHasPendingAskUserQuestionsTool detects in-flight structured question tools", () => {
-  // state: "running" — explicitly pending
+  // state: "running" with no externalResult → still in-flight
   assert.equal(
     messageHasPendingAskUserQuestionsTool({
       role: "assistant",
@@ -117,11 +117,41 @@ test("messageHasPendingAskUserQuestionsTool detects in-flight structured questio
     messageHasPendingAskUserQuestionsTool({
       role: "assistant",
       content: [
+        { type: "toolCall", name: "ask_user_questions", externalResult: { content: [], isError: false } },
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
         {
           type: "toolCall",
           name: "ask_user_questions",
           externalResult: { content: [{ type: "text", text: "answer" }], isError: false },
         },
+      ],
+    }),
+    false,
+  );
+
+  // serverToolUse shape (claude-code-cli MCP path) — no externalResult → in-flight
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "serverToolUse", name: "mcp__gsd-workflow__ask_user_questions" },
+      ],
+    }),
+    true,
+  );
+  // serverToolUse shape — externalResult present → completed
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "serverToolUse", name: "ask_user_questions", externalResult: { content: [], isError: false } },
       ],
     }),
     false,
