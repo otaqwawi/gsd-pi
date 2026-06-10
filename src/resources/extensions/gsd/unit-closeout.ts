@@ -9,13 +9,19 @@
 // `git.isolation: worktree` completed a milestone with every source file
 // untracked on the integration branch — no commit, no merge, no warning.
 //
+// The interactive adapter only fires on milestone boundaries — the durability
+// gap is the milestone close, and committing at every task/slice would sweep a
+// developer's unrelated working-tree changes. `closeUnit` itself stays general
+// over all boundaries for the pending Auto Closeout adapter re-seat.
+//
 // The auto loop keeps its existing closeout pipeline for now (the Auto
 // Closeout adapter re-seat is the documented next step in ADR-032); the
 // interactive trigger in bootstrap/register-hooks.ts is a no-op while
 // `isAutoActive()`, so auto-mode behaviour is untouched.
 //
-// Idempotent per (basePath, unitId, boundary, outcome): a re-fired completion
-// tool returns the recorded result instead of re-running git work.
+// Re-entrancy is naturally safe: a re-fired completion commits an already-clean
+// tree, which yields `nothing-to-commit`, and `appendNotification` carries its
+// own dedup window — so `closeUnit` keeps no result cache of its own.
 
 import { appendNotification, type NotifySeverity } from "./notification-store.js";
 import { readStringField } from "./auto-unit-tool-scope.js";
@@ -60,8 +66,6 @@ export interface UnitCloseoutRequest {
 }
 
 export interface UnitCloseoutResult {
-  /** False when this (unitId, boundary, outcome) was already closed — the recorded result is returned. */
-  performed: boolean;
   gitVerdict: CloseoutGitVerdict;
   commitMessage: string | null;
   /** The user-facing Needs Attention / status notice, when one was emitted. */
@@ -89,19 +93,7 @@ const defaultDeps: UnitCloseoutDeps = {
   notify: (message, severity) => appendNotification(message, severity),
 };
 
-const CLOSED_UNITS_CAP = 200;
-const closedUnits = new Map<string, UnitCloseoutResult>();
-
-/** Test seam — clears the idempotency record. */
-export function _resetUnitCloseoutStateForTests(): void {
-  closedUnits.clear();
-}
-
 export function closeUnit(request: UnitCloseoutRequest, deps: UnitCloseoutDeps = defaultDeps): UnitCloseoutResult {
-  const dedupKey = `${request.basePath}:${request.unitId}:${request.boundary}:${request.outcome}`;
-  const recorded = closedUnits.get(dedupKey);
-  if (recorded) return { ...recorded, performed: false };
-
   let commitMessage: string | null = null;
   let gitVerdict: CloseoutGitVerdict;
   let notice: string | undefined;
@@ -140,21 +132,17 @@ export function closeUnit(request: UnitCloseoutRequest, deps: UnitCloseoutDeps =
     }
   }
 
-  const result: UnitCloseoutResult = { performed: true, gitVerdict, commitMessage, notice };
-  closedUnits.set(dedupKey, result);
-  if (closedUnits.size > CLOSED_UNITS_CAP) {
-    const oldest = closedUnits.keys().next().value;
-    if (oldest !== undefined) closedUnits.delete(oldest);
-  }
-  return result;
+  return { gitVerdict, commitMessage, notice };
 }
 
 // ─── Interactive Closeout adapter (tool-observation trigger) ─────────────
 
-/** Canonical closeout tool → boundary. Aliases are canonicalized by the hook. */
+// Canonical closeout tool → boundary. Aliases are canonicalized by the hook.
+// Only the milestone boundary is wired interactively: it is the durability gap
+// that motivated ADR-032, and committing at every task/slice would sweep a
+// developer's unrelated working-tree changes. `closeUnit` still handles every
+// boundary for the pending Auto Closeout adapter re-seat.
 const CLOSEOUT_TOOL_BOUNDARIES: Record<string, CloseoutBoundary> = {
-  gsd_task_complete: "task",
-  gsd_slice_complete: "slice",
   gsd_complete_milestone: "milestone",
 };
 

@@ -3,14 +3,13 @@
 // All git/preference/notification effects go through the injected deps seam —
 // no real repos, no notification store state.
 
-import test, { beforeEach } from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   closeUnit,
   isUnitCloseoutTool,
   runInteractiveUnitCloseout,
-  _resetUnitCloseoutStateForTests,
   type UnitCloseoutDeps,
 } from "../unit-closeout.ts";
 
@@ -22,7 +21,7 @@ interface DepsLog {
 function makeDeps(overrides: {
   isolation?: "none" | "worktree" | "branch";
   branch?: string | null;
-  commitResult?: string | null | (() => never);
+  commitResult?: string | null | (() => string | null);
 } = {}): { deps: UnitCloseoutDeps; log: DepsLog } {
   const log: DepsLog = { commits: [], notices: [] };
   const deps: UnitCloseoutDeps = {
@@ -43,17 +42,12 @@ function makeDeps(overrides: {
 
 const BASE = "/tmp/closeout-test-project";
 
-beforeEach(() => {
-  _resetUnitCloseoutStateForTests();
-});
-
 test("task boundary commits and stays quiet", () => {
   const { deps, log } = makeDeps({ isolation: "worktree" });
   const result = closeUnit(
     { basePath: BASE, unitType: "execute-task", unitId: "M001/S01/T01", boundary: "task", outcome: "complete" },
     deps,
   );
-  assert.equal(result.performed, true);
   assert.equal(result.gitVerdict, "committed");
   assert.equal(result.notice, undefined);
   assert.deepEqual(log.commits, [{ unitType: "execute-task", unitId: "M001/S01/T01" }]);
@@ -122,8 +116,19 @@ test("commit failure is surfaced, never thrown", () => {
   assert.match(log.notices[0].message, /index\.lock/);
 });
 
-test("closeout is idempotent per unit/boundary/outcome", () => {
-  const { deps, log } = makeDeps({ isolation: "worktree", branch: "main" });
+test("re-entrancy is safe: a re-fire over an already-clean tree is nothing-to-commit", () => {
+  // No result cache — re-entrancy is absorbed by git itself. The second fire
+  // sees a clean tree (commit returns null) and records nothing-to-commit.
+  let firstFire = true;
+  const { deps, log } = makeDeps({
+    isolation: "worktree",
+    branch: "main",
+    commitResult: () => {
+      const committed = firstFire;
+      firstFire = false;
+      return committed ? "chore(gsd): closeout" : null;
+    },
+  });
   const request = {
     basePath: BASE,
     unitType: "complete-milestone",
@@ -133,35 +138,51 @@ test("closeout is idempotent per unit/boundary/outcome", () => {
   };
   const first = closeUnit(request, deps);
   const second = closeUnit(request, deps);
-  assert.equal(first.performed, true);
-  assert.equal(second.performed, false);
-  assert.equal(second.gitVerdict, first.gitVerdict);
-  assert.equal(log.commits.length, 1);
-  assert.equal(log.notices.length, 1);
+  assert.equal(first.gitVerdict, "isolation-bypassed");
+  assert.equal(first.commitMessage, "chore(gsd): closeout");
+  assert.equal(second.gitVerdict, "isolation-bypassed");
+  assert.equal(second.commitMessage, null);
+  assert.match(second.notice ?? "", /nothing left to commit/);
+  assert.equal(log.commits.length, 2);
 });
 
 // ─── Interactive adapter mapping ──────────────────────────────────────────
 
 test("isUnitCloseoutTool recognizes exactly the closeout tools", () => {
-  assert.equal(isUnitCloseoutTool("gsd_task_complete"), true);
-  assert.equal(isUnitCloseoutTool("gsd_slice_complete"), true);
   assert.equal(isUnitCloseoutTool("gsd_complete_milestone"), true);
   assert.equal(isUnitCloseoutTool("gsd_save_gate_result"), false);
   assert.equal(isUnitCloseoutTool("read"), false);
 });
 
-test("interactive adapter maps tool input to boundary, unit id, and canonical unit type", () => {
+test("interactive adapter is scoped to milestone boundaries — task/slice tools do not commit", () => {
+  const { deps, log } = makeDeps();
+  assert.equal(isUnitCloseoutTool("gsd_task_complete"), false);
+  assert.equal(isUnitCloseoutTool("gsd_slice_complete"), false);
+  assert.equal(
+    runInteractiveUnitCloseout(
+      { basePath: BASE, canonicalToolName: "gsd_task_complete", input: { milestoneId: "M001", sliceId: "S02", taskId: "T03" } },
+      deps,
+    ),
+    null,
+  );
+  assert.equal(
+    runInteractiveUnitCloseout(
+      { basePath: BASE, canonicalToolName: "gsd_slice_complete", input: { milestoneId: "M001", sliceId: "S02" } },
+      deps,
+    ),
+    null,
+  );
+  assert.equal(log.commits.length, 0);
+});
+
+test("interactive adapter maps milestone tool input to canonical unit type", () => {
   const { deps, log } = makeDeps();
   const result = runInteractiveUnitCloseout(
-    {
-      basePath: BASE,
-      canonicalToolName: "gsd_task_complete",
-      input: { milestoneId: "M001", sliceId: "S02", taskId: "T03" },
-    },
+    { basePath: BASE, canonicalToolName: "gsd_complete_milestone", input: { milestoneId: "M001" } },
     deps,
   );
   assert.equal(result?.gitVerdict, "committed");
-  assert.deepEqual(log.commits, [{ unitType: "execute-task", unitId: "M001/S02/T03" }]);
+  assert.deepEqual(log.commits, [{ unitType: "complete-milestone", unitId: "M001" }]);
 });
 
 test("interactive adapter accepts snake_case ids and milestone-only input", () => {
@@ -170,18 +191,14 @@ test("interactive adapter accepts snake_case ids and milestone-only input", () =
     { basePath: BASE, canonicalToolName: "gsd_complete_milestone", input: { milestone_id: "M007" } },
     deps,
   );
-  assert.equal(result?.performed, true);
+  assert.equal(result?.gitVerdict, "committed");
   assert.deepEqual(log.commits, [{ unitType: "complete-milestone", unitId: "M007" }]);
 });
 
 test("interactive adapter declines unidentifiable input instead of guessing", () => {
   const { deps, log } = makeDeps();
   assert.equal(
-    runInteractiveUnitCloseout({ basePath: BASE, canonicalToolName: "gsd_task_complete", input: { milestoneId: "M001" } }, deps),
-    null,
-  );
-  assert.equal(
-    runInteractiveUnitCloseout({ basePath: BASE, canonicalToolName: "gsd_slice_complete", input: {} }, deps),
+    runInteractiveUnitCloseout({ basePath: BASE, canonicalToolName: "gsd_complete_milestone", input: {} }, deps),
     null,
   );
   assert.equal(

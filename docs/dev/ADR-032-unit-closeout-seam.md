@@ -89,11 +89,14 @@ The MCP workflow tools run on *both* paths — in auto mode the engine performs
 closeout after the tool returns. To avoid double-closeout:
 
 - The interactive adapter attaches at the host's existing tool-observation
-  seam (`register-hooks.ts`), reacting to the closeout tools
-  (`gsd_task_complete`, `gsd_slice_complete`, `gsd_complete_milestone`).
+  seam (`register-hooks.ts`), reacting only to the milestone closeout tool
+  (`gsd_complete_milestone`). Committing at every task/slice would sweep a
+  developer's unrelated working-tree changes, and the durability gap that
+  motivated this ADR is the milestone close.
 - It is a no-op when `isAutoActive()` (auto.ts) — the engine owns closeout.
-- `closeUnit` is idempotent per `(unitId, boundary, outcome)`; a re-fire
-  detects the recorded closeout and returns the prior result.
+- `closeUnit` keeps no result cache. Re-entrancy is naturally safe: a re-fire
+  commits an already-clean tree (`nothing-to-commit`) and `appendNotification`
+  carries its own dedup window.
 
 ### 4. Fail-closed, not silent — the Closeout Git Verdict
 
@@ -138,10 +141,14 @@ computes a **Closeout Git Verdict**:
 **Shipped this pass** (`unit-closeout.ts` + `tests/unit-closeout.test.ts` +
 hook wiring in `bootstrap/register-hooks.ts`):
 
-- The Unit Closeout module with `closeUnit(request)` — idempotent per
-  `(basePath, unitId, boundary, outcome)` — and the **Interactive Closeout
-  adapter**: triggered from the host's `tool_result` observation hook for the
-  closeout tools, no-op while `isAutoActive()`, deps-injectable for tests.
+- The Unit Closeout module with `closeUnit(request)` — no result cache;
+  re-entrancy is absorbed by git (a re-fire over a clean tree is
+  `nothing-to-commit`) — and the **Interactive Closeout adapter**: triggered
+  from the host's `tool_result` observation hook for the milestone closeout tool
+  (`gsd_complete_milestone`) only, no-op while `isAutoActive()`, deps-injectable
+  for tests. Task/slice completions are intentionally not committed interactively
+  so a developer's unrelated working-tree changes are never swept; `closeUnit`
+  itself stays general over all boundaries for the Auto Closeout adapter re-seat.
 - The Closeout Git Verdict: commit on the current branch, then for milestone
   boundaries under non-`none` isolation either defer the merge to worktree
   tooling (`milestone-branch`) or fail closed loudly (`isolation-bypassed` —
