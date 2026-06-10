@@ -45,7 +45,9 @@ export function getToolSurfaceReadinessError(input: {
   if (required.length === 0) return null;
 
   const server = observation.mcpServers.find((entry) => entry.name === workflowServerName);
-  if (!server) return null;
+  if (!server) {
+    return `${TOOL_SURFACE_NOT_READY} for ${unitType}: MCP server "${workflowServerName}" is absent from the init surface (not yet connected): ${required.join(", ")}`;
+  }
 
   const missing = required.filter(
     (tool) => !observation.tools.some((name) => name === tool || mcpToolMatchesBaseName(name, tool)),

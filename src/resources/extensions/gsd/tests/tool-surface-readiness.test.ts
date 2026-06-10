@@ -46,13 +46,16 @@ describe("getToolSurfaceReadinessError", () => {
     assert.equal(error, null);
   });
 
-  test("returns null when the workflow server is not part of the session", () => {
+  test("returns an error when the expected workflow server is absent from the init surface", () => {
     const error = getToolSurfaceReadinessError({
       unitType: "run-uat",
       workflowServerName: SERVER,
       observation: { tools: ["read", "bash"], mcpServers: [{ name: "other-server", status: "connected" }] },
     });
-    assert.equal(error, null);
+    assert.ok(error, "expected a readiness error when the workflow server is absent");
+    assert.match(error, /workflow tool surface not ready for run-uat/);
+    assert.match(error, /absent from the init surface/);
+    assert.match(error, /gsd_uat_exec/);
   });
 
   test("returns null when all required tools are registered under the MCP prefix", () => {
