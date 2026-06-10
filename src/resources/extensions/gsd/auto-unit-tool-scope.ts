@@ -103,7 +103,7 @@ function isNativeWorkflowTool(toolName: string): boolean {
   return stripMcpToolPrefix(toolName) === "Workflow";
 }
 
-function readStringField(input: unknown, camel: string, snake: string): string | undefined {
+export function readStringField(input: unknown, camel: string, snake: string): string | undefined {
   if (!input || typeof input !== "object") return undefined;
   const record = input as Record<string, unknown>;
   const value = record[camel] ?? record[snake];
