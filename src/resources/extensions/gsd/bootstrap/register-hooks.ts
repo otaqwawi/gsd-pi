@@ -65,6 +65,7 @@ import { RUN_UAT_READ_ONLY_TOOL_NAMES, RUN_UAT_WORKFLOW_TOOL_NAMES } from "../to
 import { supportsSourceObservationsForUnit } from "../source-observations.js";
 import { clearPendingAutoStart } from "../pending-auto-start.js";
 import { resolveWorkflowToolBasePath } from "./dynamic-tools.js";
+import { getRequiredWorkflowToolsForUnit } from "../unit-tool-contracts.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -262,6 +263,7 @@ export function buildMinimalAutoGsdToolSet(
   activeToolNames: readonly string[],
   unitType: string | undefined,
   registeredToolNames: readonly string[] = activeToolNames,
+  warnOnUnresolvedRequiredTools = registeredToolNames !== activeToolNames,
 ): string[] {
   if (unitType === "run-uat") {
     return buildRunUatGsdToolSet(activeToolNames, registeredToolNames);
@@ -277,7 +279,36 @@ export function buildMinimalAutoGsdToolSet(
     [...activeToolNames, ...registeredToolNames],
     [...MINIMAL_GSD_TOOL_NAMES, ...unitTools],
   );
-  return withPreservedShimTools([...new Set([...preserved, ...scoped])]);
+  const result = withPreservedShimTools([...new Set([...preserved, ...scoped])]);
+  warnIfRequiredWorkflowToolsUnresolved(unitType, result, warnOnUnresolvedRequiredTools);
+  return result;
+}
+
+function hasResolvedWorkflowTool(
+  resolvedToolNames: readonly string[],
+  requiredToolName: string,
+): boolean {
+  return resolvedToolNames.some(
+    (name) => name === requiredToolName || mcpToolMatchesBaseName(name, requiredToolName),
+  );
+}
+
+function warnIfRequiredWorkflowToolsUnresolved(
+  unitType: string | undefined,
+  scopedToolNames: readonly string[],
+  shouldWarn: boolean,
+): void {
+  if (!unitType || !shouldWarn) return;
+
+  const unresolved = getRequiredWorkflowToolsForUnit(unitType).filter(
+    (toolName) => !hasResolvedWorkflowTool(scopedToolNames, toolName),
+  );
+  if (unresolved.length === 0) return;
+
+  safetyLogWarning(
+    "bootstrap",
+    `buildMinimalAutoGsdToolSet(${unitType}): required workflow tool(s) not in active/registered surface after scoping: ${unresolved.join(", ")}. Tool registration may have partially failed, provider filtering may have removed a required tool, or workflow MCP may be disconnected.`,
+  );
 }
 
 export function buildRunUatGsdToolSet(
@@ -330,6 +361,7 @@ export function buildRequestScopedGsdToolSet(
   requestCustomMessages: readonly { customType?: string }[] | undefined,
   registeredToolNames: readonly string[] = activeToolNames,
   guidedUnitType?: string,
+  warnOnUnresolvedRequiredTools = registeredToolNames !== activeToolNames,
 ): string[] | undefined {
   for (let index = (requestCustomMessages?.length ?? 0) - 1; index >= 0; index--) {
     const currentCustomType = requestCustomMessages?.[index]?.customType;
@@ -340,7 +372,12 @@ export function buildRequestScopedGsdToolSet(
       currentCustomType === "gsd-triage"
     ) {
       if (guidedUnitType) {
-        return buildMinimalAutoGsdToolSet(activeToolNames, guidedUnitType, registeredToolNames);
+        return buildMinimalAutoGsdToolSet(
+          activeToolNames,
+          guidedUnitType,
+          registeredToolNames,
+          warnOnUnresolvedRequiredTools,
+        );
       }
       return buildMinimalGsdWorkflowToolSet(activeToolNames, registeredToolNames);
     }
@@ -389,11 +426,13 @@ function applyMinimalGsdToolSurface(pi: ExtensionAPI): void {
   const dash = getAutoRuntimeSnapshot();
   if (dash.active && dash.currentUnit) {
     const currentToolNames = pi.getActiveTools();
+    const hasRegisteredSurface = typeof pi.getAllTools === "function";
     const registeredToolNames = resolveRegisteredToolNames(pi, currentToolNames);
     const scopedToolNames = buildMinimalAutoGsdToolSet(
       currentToolNames,
       dash.currentUnit.type,
       registeredToolNames,
+      hasRegisteredSurface,
     );
     recordAutoToolSurfaceSnapshot({
       source: "runtime-scope",
@@ -415,9 +454,10 @@ export function scopeGsdWorkflowToolsForDispatch(
 ): ScopedGsdWorkflowState | null {
   if (isFullGsdToolSurfaceRequested()) return null;
   const current = pi.getActiveTools();
+  const hasRegisteredSurface = typeof pi.getAllTools === "function";
   const registeredToolNames = resolveRegisteredToolNames(pi, current);
   const scoped = unitType
-    ? buildMinimalAutoGsdToolSet(current, unitType, registeredToolNames)
+    ? buildMinimalAutoGsdToolSet(current, unitType, registeredToolNames, hasRegisteredSurface)
     : buildMinimalGsdWorkflowToolSet(current, registeredToolNames);
   recordAutoToolSurfaceSnapshot({
     source: "dispatch-scope",
@@ -1581,6 +1621,7 @@ export function registerHooks(
       return surfaceReduced ? { toolNames: providerCompatible } : undefined;
     }
     const registeredToolNames = resolveRegisteredToolNames(pi, event.activeToolNames);
+    const hasRegisteredSurface = typeof pi.getAllTools === "function";
     const compatibleRegisteredToolNames = filterToolsForProvider(
       registeredToolNames,
       event.selectedModelApi,
@@ -1595,6 +1636,7 @@ export function registerHooks(
       event.requestCustomMessages,
       requestRegisteredToolNames,
       guidedUnit?.unitType,
+      hasRegisteredSurface,
     );
     if (requestScoped) {
       recordAutoToolSurfaceSnapshot({
@@ -1615,6 +1657,7 @@ export function registerHooks(
         dash.currentUnit.type === "run-uat" ? aliasFilteredCompatible : providerCompatible,
         dash.currentUnit.type,
         registeredForUnit,
+        hasRegisteredSurface,
       );
       recordAutoToolSurfaceSnapshot({
         source: "provider-adjustment",
