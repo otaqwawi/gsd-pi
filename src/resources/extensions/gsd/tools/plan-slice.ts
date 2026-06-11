@@ -26,7 +26,7 @@ import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
 import { validatePathOnlyPlanningFields, validatePlanningPathScope } from "../planning-path-scope.js";
-import { checkFilePathConsistency, checkTaskOrdering } from "../pre-execution-checks.js";
+import { runTaskPathChecks } from "../pre-execution-checks.js";
 import type { TaskRow } from "../db-task-slice-rows.js";
 import { buildTaskFileName, gsdProjectionRoot } from "../paths.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
@@ -269,10 +269,7 @@ function validateTaskPathsBeforePersist(
     .map((root) => resolve(root))
     .filter((root) => root !== baseRoot);
   const context = additionalRoots.length > 0 ? { additionalRoots } : undefined;
-  const checks = [
-    ...checkFilePathConsistency(taskRows, basePath, context),
-    ...checkTaskOrdering(taskRows, basePath, context),
-  ];
+  const checks = runTaskPathChecks(taskRows, basePath, context);
   const blocking = checks.filter((check) => !check.passed && check.blocking);
 
   if (blocking.length === 0) return null;
