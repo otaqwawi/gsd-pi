@@ -2429,4 +2429,29 @@ describe("checkPlanningArtifactReferences", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("allows a bare artifact-style name that exists only at canonicalProjectRoot (not at worktree basePath)", () => {
+    withTempDir((canonicalRoot) => {
+      withTempDir((worktreeRoot) => {
+        writeFileSync(join(canonicalRoot, "M001-CONTEXT.md"), "# tracked source file");
+        const tasks = [createTask({ id: "T01", inputs: ["M001-CONTEXT.md"] })];
+        assert.deepEqual(
+          checkPlanningArtifactReferences(tasks, worktreeRoot, { canonicalProjectRoot: canonicalRoot }),
+          [],
+        );
+      });
+    });
+  });
+
+  test("blocks .GSD/ paths with mixed casing (case-insensitive metadata dir match)", () => {
+    withTempDir((tempDir) => {
+      const tasks = [
+        createTask({ id: "T01", inputs: [".GSD/milestones/M001/M001-CONTEXT.md"] }),
+      ];
+      const results = checkPlanningArtifactReferences(tasks, tempDir);
+      assert.equal(results.length, 1);
+      assert.equal(results[0].blocking, true);
+      assert.ok(results[0].message.includes("preloaded as context"));
+    });
+  });
 });

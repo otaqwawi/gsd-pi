@@ -635,7 +635,7 @@ export function checkFilePathConsistency(
 // ─── Planning Artifact Reference Check ───────────────────────────────────────
 
 function isFrameworkMetadataPath(normalizedFile: string): boolean {
-  return normalizedFile.split("/").some((segment) => FRAMEWORK_METADATA_DIRS.includes(segment));
+  return normalizedFile.split("/").some((segment) => FRAMEWORK_METADATA_DIRS.includes(segment.toLowerCase()));
 }
 
 /**
