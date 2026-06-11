@@ -10,6 +10,7 @@ import { DISCUSS_TOOLS_ALLOWLIST } from "../constants.ts";
 import { buildMinimalAutoGsdToolSet, buildMinimalGsdToolSet, buildMinimalGsdWorkflowToolSet, buildRequestScopedGsdToolSet, MINIMAL_AUTO_BASE_TOOL_NAMES, MINIMAL_GSD_TOOL_NAMES, requestHasGsdCustomType, restoreGsdWorkflowTools, scopeGsdWorkflowToolsForDispatch } from "../bootstrap/register-hooks.ts";
 import { filterToolsForProvider } from "../model-router.ts";
 import { applyUnitSkillVisibility } from "../skill-scope.ts";
+import { drainLogs } from "../workflow-logger.ts";
 
 test("buildMinimalGsdToolSet preserves non-GSD tools and replaces broad GSD surface", () => {
   const result = buildMinimalGsdToolSet([
@@ -101,6 +102,40 @@ test("buildMinimalAutoGsdToolSet keeps unit-specific completion tools without al
   assert.ok(!result.includes("gsd_complete_task"));
   assert.ok(!result.includes("gsd_slice_complete"));
   assert.ok(!result.includes("gsd_complete_slice"));
+});
+
+test("buildMinimalAutoGsdToolSet warns when plan-milestone required tools are unresolved", () => {
+  drainLogs();
+  const result = buildMinimalAutoGsdToolSet(
+    [
+      "ask_user_questions",
+      "bash",
+      "read",
+      "gsd_milestone_status",
+      "gsd_plan_milestone",
+    ],
+    "plan-milestone",
+    [
+      "ask_user_questions",
+      "bash",
+      "read",
+      "gsd_milestone_status",
+      "gsd_plan_milestone",
+    ],
+  );
+
+  assert.ok(result.includes("gsd_plan_milestone"));
+  assert.ok(!result.includes("gsd_plan_slice"));
+
+  const logs = drainLogs();
+  assert.ok(
+    logs.some((entry) =>
+      entry.component === "bootstrap" &&
+      entry.message.includes("buildMinimalAutoGsdToolSet(plan-milestone)") &&
+      entry.message.includes("gsd_plan_slice")
+    ),
+    `expected missing gsd_plan_slice bootstrap warning, got ${JSON.stringify(logs)}`,
+  );
 });
 
 test("buildMinimalAutoGsdToolSet scopes run-uat to UAT-specific and read-only tools", () => {
