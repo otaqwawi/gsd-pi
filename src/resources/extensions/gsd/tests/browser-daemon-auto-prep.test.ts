@@ -21,9 +21,11 @@ test("shouldWarmBrowserDaemonForUat skips artifact-driven UAT", () => {
   );
 });
 
-test("shouldWarmBrowserDaemonForUat enables Claude Code browser UAT when gsd-browser is available", () => {
+test("shouldWarmBrowserDaemonForUat enables Claude Code browser UAT when gsd-browser is available", (t) => {
   const availability = resolveGsdBrowserCliAvailability();
-  test.skip(!availability.available, "bundled gsd-browser CLI unavailable");
+  if (!availability.available) {
+    t.skip("bundled gsd-browser CLI unavailable");
+  }
 
   assert.equal(
     shouldWarmBrowserDaemonForUat({
@@ -62,7 +64,9 @@ test("shouldWarmBrowserDaemonForUat skips when warm-up is disabled", () => {
 
 test("prepareBrowserDaemonForUat starts daemon for browser-facing web apps", (t) => {
   const availability = resolveGsdBrowserCliAvailability();
-  test.skip(!availability.available, "bundled gsd-browser CLI unavailable");
+  if (!availability.available) {
+    t.skip("bundled gsd-browser CLI unavailable");
+  }
 
   const projectRoot = mkdtempSync(join(tmpdir(), "gsd-browser-daemon-prep-"));
   writeFileSync(
