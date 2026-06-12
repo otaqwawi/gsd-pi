@@ -507,7 +507,7 @@ export class AuthStorage {
 	 * Priority:
 	 * 1. Runtime override (CLI --api-key)
 	 * 2. OAuth token from auth.json (when provider supports OAuth login)
-	 * 3. API key from auth.json
+	 * 3. API key from auth.json (including fallback when OAuth refresh fails)
 	 * 4. Environment variable
 	 * 5. Fallback resolver (models.json custom providers)
 	 */
@@ -540,6 +540,9 @@ export class AuthStorage {
 				return undefined;
 			}
 
+			const resolveStoredApiKey = (): string | undefined =>
+				apiKeyCredential ? resolveConfigValue(apiKeyCredential.key) : undefined;
+
 			// Check if token needs refresh
 			const needsRefresh = Date.now() >= cred.expires;
 
@@ -552,20 +555,21 @@ export class AuthStorage {
 					}
 				} catch (error) {
 					this.recordError(error);
-					// Refresh failed - re-read file to check if another instance succeeded
-					this.reload();
-					const updatedCred = this.getCredentialsForProvider(providerId).find(
-						(entry) => entry.type === "oauth",
-					);
+				}
 
-					if (updatedCred?.type === "oauth" && Date.now() < updatedCred.expires) {
-						// Another instance refreshed successfully, use those credentials
-						return provider.getApiKey(updatedCred);
-					}
+				// Refresh failed or returned nothing - re-read file to check if another instance succeeded
+				this.reload();
+				const updatedCred = this.getCredentialsForProvider(providerId).find(
+					(entry) => entry.type === "oauth",
+				);
 
-					// Refresh truly failed - return undefined so model discovery skips this provider
-					// User can /login to re-authenticate (credentials preserved for retry)
-					return undefined;
+				if (updatedCred?.type === "oauth" && Date.now() < updatedCred.expires) {
+					return provider.getApiKey(updatedCred);
+				}
+
+				const storedApiKey = resolveStoredApiKey();
+				if (storedApiKey) {
+					return storedApiKey;
 				}
 			} else {
 				// Token not expired, use current access token
