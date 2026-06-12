@@ -817,4 +817,134 @@ test('(v) run-uat prompt keeps deferred browser work artifact-driven', async () 
       cleanup(base);
     }
 });
+
+test('(x) checkNeedsRunUat returns runtime-executable when slice SUMMARY names a self-contained harness (M007/S01)', async () => {
+    // Regression: the dispatch gate must surface the same effective UAT mode
+    // that buildRunUatPrompt emits. When the UAT file alone declares
+    // `browser-executable` but the slice SUMMARY references `npm run test:uat`,
+    // the prompt promotes to `runtime-executable` — and so must the gate, or
+    // the auto-dispatch path requires browser tools / warms up the browser
+    // daemon (and may stop dispatch entirely) for a UAT that never touches
+    // the browser. See cursor[bot] review on PR #696.
+    const base = createFixtureBase();
+    try {
+      const roadmapDir = join(base, '.gsd', 'milestones', 'M007');
+      mkdirSync(roadmapDir, { recursive: true });
+      writeFileSync(
+        join(roadmapDir, 'M007-ROADMAP.md'),
+        [
+          '# M007: Test roadmap',
+          '',
+          '## Slices',
+          '',
+          '- [x] **S01: Only slice** `risk:low` `depends:[]`',
+          '',
+          '## Boundary Map',
+          '',
+        ].join('\n'),
+      );
+      writeSliceFile(
+        base,
+        'M007',
+        'S01',
+        'UAT',
+        [
+          '# S01 UAT',
+          '',
+          '## UAT Type',
+          '- UAT mode: browser-executable',
+          '',
+          '## Preconditions',
+          '- Start the dev/local verification server with `npm run test:server`.',
+        ].join('\n'),
+      );
+      writeSliceFile(
+        base,
+        'M007',
+        'S01',
+        'SUMMARY',
+        [
+          '# S01 Summary',
+          '',
+          'Verification: `npm run test:uat` passed with clean browser diagnostics.',
+        ].join('\n'),
+      );
+
+      const state = {
+        activeMilestone: { id: 'M007', title: 'Test roadmap' },
+        activeSlice: null,
+        activeTask: null,
+        phase: 'validating-milestone',
+        recentDecisions: [],
+        blockers: [],
+        nextAction: 'Validate M007',
+        registry: [],
+      } as const;
+
+      const result = await checkNeedsRunUat(base, 'M007', state as any, { uat_dispatch: true } as any);
+      assert.deepStrictEqual(
+        result,
+        { sliceId: 'S01', uatType: 'runtime-executable' },
+        'dispatch gate must mirror the prompt`s runtime-executable promotion so it does not require browser tools',
+      );
+    } finally {
+      cleanup(base);
+    }
+});
+
+test('(x2) checkNeedsRunUat leaves true browser-executable UAT unpromoted when no harness is referenced', async () => {
+    // Counter-test for (x): when the slice SUMMARY does NOT name a
+    // self-contained harness, the dispatch gate must still require browser
+    // tools for a genuinely browser-executable UAT.
+    const base = createFixtureBase();
+    try {
+      const roadmapDir = join(base, '.gsd', 'milestones', 'M008');
+      mkdirSync(roadmapDir, { recursive: true });
+      writeFileSync(
+        join(roadmapDir, 'M008-ROADMAP.md'),
+        [
+          '# M008: Test roadmap',
+          '',
+          '## Slices',
+          '',
+          '- [x] **S01: Only slice** `risk:low` `depends:[]`',
+          '',
+          '## Boundary Map',
+          '',
+        ].join('\n'),
+      );
+      writeSliceFile(base, 'M008', 'S01', 'UAT', makeBrowserObservableUatContent('browser-executable'));
+      writeSliceFile(
+        base,
+        'M008',
+        'S01',
+        'SUMMARY',
+        [
+          '# S01 Summary',
+          '',
+          'Verification: clicked through the UI and confirmed the search box filters todos.',
+        ].join('\n'),
+      );
+
+      const state = {
+        activeMilestone: { id: 'M008', title: 'Test roadmap' },
+        activeSlice: null,
+        activeTask: null,
+        phase: 'validating-milestone',
+        recentDecisions: [],
+        blockers: [],
+        nextAction: 'Validate M008',
+        registry: [],
+      } as const;
+
+      const result = await checkNeedsRunUat(base, 'M008', state as any, { uat_dispatch: true } as any);
+      assert.deepStrictEqual(
+        result,
+        { sliceId: 'S01', uatType: 'browser-executable' },
+        'a true browser-executable UAT without a harness reference must keep its browser-executable mode',
+      );
+    } finally {
+      cleanup(base);
+    }
+});
 });

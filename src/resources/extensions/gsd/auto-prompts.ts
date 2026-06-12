@@ -60,7 +60,6 @@ import { findMilestoneIds } from "./milestone-ids.js";
 import { buildRunUatPresentationForType, RUN_UAT_TOOL_PRESENTATION_PLAN_ID } from "./tool-presentation-plan.js";
 import {
   classifyUatContentForRun,
-  resolveEffectiveUatType,
   shouldDispatchUatForContent,
   type UatType,
 } from "./uat-policy.js";
@@ -1464,6 +1463,40 @@ export async function checkNeedsReassessment(
  * - No UAT file exists for the slice
  * - UAT result file already exists (idempotent — already ran)
  */
+/**
+ * Resolve the effective UAT mode for the dispatch gate the same way
+ * `buildRunUatPrompt` does: classify the UAT body with the slice's SUMMARY as
+ * supplemental context, so a `browser-executable` UAT whose slice references a
+ * self-contained harness (`npm run test:uat`, `search-uat.mjs`, `npx
+ * playwright test`) is promoted to `runtime-executable` for the gate too.
+ *
+ * Without this, `checkNeedsRunUat` returns `browser-executable` while the
+ * prompt instructs runtime-only execution, causing the dispatch gate to
+ * require browser tools / warm up the browser daemon (or stop dispatch when
+ * browser MCP is unavailable) for UAT runs that never touch the browser. See
+ * cursor[bot] review on PR #696 for the M007/S01 regression.
+ */
+async function resolveRunUatEffectiveType(
+  base: string,
+  mid: string,
+  sliceId: string,
+  uatContent: string,
+): Promise<UatType> {
+  let summaryContent = "";
+  try {
+    const summaryPath = resolveSliceFile(base, mid, sliceId, "SUMMARY");
+    if (summaryPath) {
+      summaryContent = (await loadFile(summaryPath)) ?? "";
+    }
+  } catch (err) {
+    logWarning(
+      "prompt",
+      `resolveRunUatEffectiveType SUMMARY load failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  return classifyUatContentForRun(uatContent, summaryContent).effectiveType;
+}
+
 export async function checkNeedsRunUat(
   base: string, mid: string, state: GSDState, prefs: GSDPreferences | undefined,
 ): Promise<{ sliceId: string; uatType: UatType } | null> {
@@ -1492,7 +1525,8 @@ export async function checkNeedsRunUat(
             if (assessmentContent && hasVerdict(assessmentContent)) continue;
           }
           if (!shouldDispatchUatForContent(uatContent, prefs)) continue;
-          return { sliceId: sid, uatType: resolveEffectiveUatType(uatContent) };
+          const uatType = await resolveRunUatEffectiveType(base, mid, sid, uatContent);
+          return { sliceId: sid, uatType };
         }
         return null;
       }
@@ -1525,7 +1559,8 @@ export async function checkNeedsRunUat(
       if (assessmentContentFb && hasVerdict(assessmentContentFb)) continue;
     }
     if (!shouldDispatchUatForContent(uatContentFb, prefs)) continue;
-    return { sliceId: uatSid, uatType: resolveEffectiveUatType(uatContentFb) };
+    const uatType = await resolveRunUatEffectiveType(base, mid, uatSid, uatContentFb);
+    return { sliceId: uatSid, uatType };
   }
   return null;
 }
