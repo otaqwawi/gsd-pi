@@ -185,8 +185,9 @@ export function resolveThinkingLevelForUnit(unitType: string): GSDThinkingLevel 
  */
 export function resolveDefaultSessionModel(
   sessionProvider?: string,
+  basePath?: string,
 ): { provider: string; id: string } | undefined {
-  const prefs = loadEffectiveGSDPreferences(undefined, { availableModelIds: [] });
+  const prefs = loadEffectiveGSDPreferences(basePath, { availableModelIds: [] });
   const models = prefs?.preferences?.models;
   if (!models) return undefined;
 

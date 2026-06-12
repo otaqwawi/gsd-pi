@@ -994,12 +994,14 @@ export async function bootstrapAutoSession(
   // phase-specific planning model for a discuss turn (#2829).
   //
   // Precedence:
-  // 1) Explicit session override via /gsd model (this session)
-  // 2) Current session model from settings/session restore (if provider ready)
-  // 3) GSD model preferences from PREFERENCES.md (validated against live auth)
+  // 1) Explicit session override via /gsd model or /gsd auto --model (this session)
+  // 2) GSD model preferences from PREFERENCES.md (validated against live auth)
+  // 3) Current session model from settings/session restore (if provider ready)
   //
-  // This preserves #3517 defaults while honoring explicit runtime model
-  // selection for subsequent /gsd runs in the same session.
+  // PREFERENCES.md wins over the ambient session default (#3517) so /gsd auto
+  // does not stick on claude-code/claude-sonnet-4-6 when the user configured
+  // models via /gsd workflow-preferences or PREFERENCES.md. Custom providers
+  // still skip PREFERENCES.md entirely (#4122).
   //
   // Exception (#4122): when the session provider is a custom provider declared
   // in ~/.gsd/agent/models.json (Ollama, vLLM, OpenAI-compatible proxy, etc.),
@@ -1011,7 +1013,7 @@ export async function bootstrapAutoSession(
   const sessionProviderIsCustom = isCustomProvider(ctx.model?.provider);
   const preferredModel = sessionProviderIsCustom
     ? null
-    : resolveDefaultSessionModel(ctx.model?.provider);
+    : resolveDefaultSessionModel(ctx.model?.provider, base);
   // Validate the preferred model against the live registry + provider auth so
   // an unconfigured PREFERENCES.md entry (no API key / OAuth) can't become the
   // start-model snapshot. Without this, every subsequent unit would try to
@@ -1041,8 +1043,8 @@ export async function bootstrapAutoSession(
     : null;
   const startThinkingSnapshot = pi.getThinkingLevel();
   const startModelSnapshot = manualSessionOverride
-    ?? currentSessionModel
     ?? validatedPreferredModel
+    ?? currentSessionModel
     ?? null;
 
   try {
