@@ -58,7 +58,12 @@ import { debugLog } from "./debug-logger.js";
 import { buildSkillActivationBlock, buildSkillDiscoveryVars } from "./skill-activation.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import { buildRunUatPresentationForType, RUN_UAT_TOOL_PRESENTATION_PLAN_ID } from "./tool-presentation-plan.js";
-import { resolveEffectiveUatType, shouldDispatchUatForContent, type UatType } from "./uat-policy.js";
+import {
+  classifyUatContentForRun,
+  resolveEffectiveUatType,
+  shouldDispatchUatForContent,
+  type UatType,
+} from "./uat-policy.js";
 import { buildWebAppUatGuidanceBlock } from "./web-app-uat.js";
 
 export { buildSkillActivationBlock, buildSkillDiscoveryVars };
@@ -3574,15 +3579,30 @@ export async function buildRunUatPrompt(
     null,
     cappedInlinedContext.length < rawInlinedContext.length ? `dropped ${rawInlinedContext.length - cappedInlinedContext.length} chars` : "within budget",
   );
+  const uatPolicy = classifyUatContentForRun(uatContent, cappedInlinedContext);
+  const uatType = uatPolicy.effectiveType;
+  const runtimeHarnessOverride = uatPolicy.declaredType === "browser-executable" && uatType === "runtime-executable"
+    ? [
+      "## Runtime harness override",
+      "",
+      "This UAT declares `browser-executable` but the slice references a self-contained verification command (`npm run test:uat`, `search-uat.mjs`, or similar).",
+      "Run **only** that command via `gsd_uat_exec` with `uat-runtime-check` intent.",
+      "Do **not** call `uat-service-start`, do **not** run `npm run start`, `npm run test:server`, or any separate server command.",
+      "Do **not** use `browser_navigate` or other `browser_*` tools — the harness already exercises the browser.",
+      "When the harness exits 0, save **PASS** with `uatType: \"runtime-executable\"` (the effective mode above, not the UAT file header) and **runtime** check modes only.",
+      "",
+    ].join("\n")
+    : "";
   const inlinedContext = prependContextModeToBlock(
     "run-uat",
     base,
-    cappedInlinedContext,
+    runtimeHarnessOverride
+      ? `${runtimeHarnessOverride}\n${cappedInlinedContext}`
+      : cappedInlinedContext,
   );
   emitPromptContextTelemetry("run-uat", contextTelemetry, inlinedContext);
 
   const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "ASSESSMENT"));
-  const uatType = resolveEffectiveUatType(uatContent);
   const canonicalPresentation = JSON.stringify(buildRunUatPresentationForType(uatType), null, 2);
 
   return loadPrompt("run-uat", {

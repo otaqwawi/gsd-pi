@@ -731,6 +731,75 @@ test('(u) run-uat prompt promotes artifact-driven browser specs to browser-execu
     }
 });
 
+test('(w) run-uat prompt promotes browser-executable harness specs to runtime-executable (M006/S01)', async () => {
+    const base = createFixtureBase();
+    try {
+      const uatRel = '.gsd/milestones/M006/slices/S01/S01-UAT.md';
+      const uatContent = [
+        '# S01 UAT',
+        '',
+        '## UAT Type',
+        '- UAT mode: browser-executable',
+        '',
+        '## Preconditions',
+        '- Start the local app server with `npm run start`.',
+        '- Open the app at `http://127.0.0.1:4173`.',
+        '',
+        '## Evidence',
+        '- Fresh closeout verification command: `npm run test:uat`',
+      ].join('\n');
+      writeSliceFile(base, 'M006', 'S01', 'UAT', uatContent);
+
+      const prompt = await buildRunUatPrompt('M006', 'S01', uatRel, uatContent, base);
+
+      assert.match(prompt, /\*\*Detected UAT mode:\*\*\s*`runtime-executable`/);
+      assert.match(prompt, /uatType: "runtime-executable"/);
+      assert.match(prompt, /Runtime harness override/i);
+      assert.match(prompt, /Do \*\*not\*\* call `uat-service-start`/);
+      assert.doesNotMatch(prompt, /uatType: "browser-executable"/);
+    } finally {
+      cleanup(base);
+    }
+});
+
+test('(w2) run-uat prompt promotes harness from slice context when UAT only names test:server (M007/S01)', async () => {
+    const base = createFixtureBase();
+    try {
+      const uatRel = '.gsd/milestones/M007/slices/S01/S01-UAT.md';
+      const uatContent = [
+        '# S01 UAT',
+        '',
+        '## UAT Type',
+        '- UAT mode: browser-executable',
+        '',
+        '## Preconditions',
+        '- Start the dev/local verification server with `npm run test:server`.',
+        '- Open the app at the localhost URL printed by the server.',
+      ].join('\n');
+      writeSliceFile(base, 'M007', 'S01', 'UAT', uatContent);
+      writeSliceFile(
+        base,
+        'M007',
+        'S01',
+        'SUMMARY',
+        [
+          '# S01 Summary',
+          '',
+          'Verification: `npm run test:uat` passed with clean browser diagnostics.',
+        ].join('\n'),
+      );
+
+      const prompt = await buildRunUatPrompt('M007', 'S01', uatRel, uatContent, base);
+
+      assert.match(prompt, /\*\*Detected UAT mode:\*\*\s*`runtime-executable`/);
+      assert.match(prompt, /Runtime harness override/i);
+      assert.match(prompt, /npm run test:server/);
+      assert.match(prompt, /uatType: "runtime-executable"/);
+    } finally {
+      cleanup(base);
+    }
+});
+
 test('(v) run-uat prompt keeps deferred browser work artifact-driven', async () => {
     const base = createFixtureBase();
     try {
