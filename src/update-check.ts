@@ -152,11 +152,16 @@ export function isBunInstall(argv1: string | undefined = process.argv[1]): boole
 
 export function resolveInstallCommand(
   pkg: string,
-  options: { argv1?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
+  options: {
+    argv1?: string
+    env?: NodeJS.ProcessEnv
+    platform?: NodeJS.Platform
+    existsFn?: (path: string) => boolean
+  } = {},
 ): string {
   if (isBunInstall(options.argv1)) return `bun add -g ${pkg}`
   if (isPnpmInstall(options.argv1, options.env)) return `pnpm add -g ${pkg}`
-  const npmPrefix = resolveWindowsNpmGlobalPrefix(options.argv1, options.platform)
+  const npmPrefix = resolveWindowsNpmGlobalPrefix(options.argv1, options.platform, options.existsFn)
   if (npmPrefix) return `npm --prefix ${quoteWindowsArg(npmPrefix)} install -g ${pkg}`
   return `npm install -g ${pkg}`
 }
@@ -164,12 +169,20 @@ export function resolveInstallCommand(
 function resolveWindowsNpmGlobalPrefix(
   argv1: string | undefined = process.argv[1],
   platform: NodeJS.Platform = process.platform,
+  existsFn: (path: string) => boolean = existsSync,
 ): string | null {
   if (platform !== 'win32' || !argv1) return null
   const normalized = pathWin32.normalize(argv1)
   const marker = `${pathWin32.sep}node_modules${pathWin32.sep}`
   const index = normalized.toLowerCase().lastIndexOf(marker)
-  return index > 0 ? normalized.slice(0, index) : null
+  if (index <= 0) return null
+  const prefix = normalized.slice(0, index)
+  // Verify this is a real npm global prefix: such a directory always contains
+  // npm's own bin shim (`npm.cmd`) as a sibling of `node_modules/`. Local
+  // project `node_modules/`, npx caches, and other non-global layouts do not,
+  // so without this check `--prefix` would target the wrong directory.
+  if (!existsFn(pathWin32.join(prefix, 'npm.cmd'))) return null
+  return prefix
 }
 
 function quoteWindowsArg(value: string): string {

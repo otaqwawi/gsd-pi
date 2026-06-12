@@ -78,7 +78,14 @@ function resolveWindowsNpmGlobalPrefix(
   const normalized = pathWin32.normalize(argv1);
   const marker = `${pathWin32.sep}node_modules${pathWin32.sep}`;
   const index = normalized.toLowerCase().lastIndexOf(marker);
-  return index > 0 ? normalized.slice(0, index) : null;
+  if (index <= 0) return null;
+  const prefix = normalized.slice(0, index);
+  // Verify this is a real npm global prefix: such a directory always contains
+  // npm's own bin shim (`npm.cmd`) as a sibling of `node_modules/`. Local
+  // project `node_modules/`, npx caches, and other non-global layouts do not,
+  // so without this check `--prefix` would target the wrong directory.
+  if (!existsSync(pathWin32.join(prefix, "npm.cmd"))) return null;
+  return prefix;
 }
 
 function quoteWindowsArg(value: string): string {
