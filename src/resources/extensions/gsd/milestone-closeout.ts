@@ -5,10 +5,20 @@
 // - postUnit: git commit, artifact verify, DB settle, then GitHub finalize
 // - recovery: DB repair from artifacts, then GitHub finalize
 
+import { existsSync } from "node:fs";
+
 import { loadFile } from "./files.js";
 import { resolveMilestoneFile } from "./paths.js";
-import { getMilestone, getClosedSliceIds, isDbAvailable } from "./gsd-db.js";
+import {
+  getMilestone,
+  getClosedSliceIds,
+  getLatestAssessmentByScope,
+  getMilestoneSlices,
+  isDbAvailable,
+} from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
+import { resolveExpectedArtifactPath } from "./auto-artifact-paths.js";
+import { handleCompleteMilestone } from "./tools/complete-milestone.js";
 import { runSafely } from "./auto-utils.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
 import { uatSignoffBlockerGuidance } from "./guidance.js";
@@ -27,6 +37,76 @@ import {
 
 const COMPLETE_MILESTONE_DB_SETTLE_MS = 1500;
 const COMPLETE_MILESTONE_DB_SETTLE_POLL_MS = 100;
+
+/**
+ * True when a milestone is terminal for git cleanup (orphaned worktrees, stale branches).
+ * DB-authoritative (ADR-017): closed status, or validation-pass with all slices closed.
+ * When the DB is unavailable we cannot make this decision and conservatively
+ * return false so callers leave the worktree/branch alone instead of cleaning
+ * up based on parsed projections.
+ */
+export async function isCompletedMilestoneTerminal(
+  _basePath: string,
+  milestoneId: string,
+): Promise<boolean> {
+  if (!isDbAvailable()) return false;
+
+  const milestone = getMilestone(milestoneId);
+  if (!milestone) return false;
+
+  if (isClosedStatus(milestone.status)) {
+    return true;
+  }
+
+  const validation = getLatestAssessmentByScope(milestoneId, "milestone-validation");
+  if (validation?.status !== "pass") {
+    return false;
+  }
+
+  const slices = getMilestoneSlices(milestoneId);
+  if (slices.length === 0) return false;
+  return slices.every((slice) => isClosedStatus(slice.status));
+}
+
+/** Write a missing milestone SUMMARY projection when canonical DB closeout already settled. */
+export async function repairMissingMilestoneSummaryProjection(
+  basePath: string,
+  milestoneId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const milestone = getMilestone(milestoneId);
+  if (!milestone) {
+    return { ok: false, error: `milestone not found: ${milestoneId}` };
+  }
+
+  const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, milestoneId);
+  const summaryPath = resolveExpectedArtifactPath("complete-milestone", milestoneId, artifactBasePath);
+  if (summaryPath && existsSync(summaryPath)) {
+    return { ok: true };
+  }
+
+  const result = await handleCompleteMilestone(
+    {
+      milestoneId,
+      title: milestone.title,
+      oneLiner: "Canonical closeout completed; summary projection repaired automatically.",
+      narrative:
+        "The workflow database recorded this milestone as complete, but the milestone SUMMARY artifact was missing on disk. " +
+        "Dispatch policy repaired the projection so closeout proof and cleanup can proceed.",
+      verificationPassed: true,
+      triggerReason: "closeout-projection-repair",
+    },
+    basePath,
+  );
+
+  if ("error" in result) {
+    return { ok: false, error: result.error };
+  }
+  const writtenSummaryPath = result.summaryPath;
+  if (result.stale || !writtenSummaryPath || !existsSync(writtenSummaryPath)) {
+    return { ok: false, error: "milestone SUMMARY projection write failed" };
+  }
+  return { ok: true };
+}
 
 /**
  * True when the milestone is closed in the DB and the completion summary artifact exists.
@@ -78,7 +158,22 @@ export async function evaluateCompleteMilestoneDispatch(
   if (isDbAvailable()) {
     const milestone = getMilestone(mid);
     if (milestone && isClosedStatus(milestone.status)) {
-      return { action: "skip" };
+      const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, mid);
+      const summaryPath = resolveExpectedArtifactPath("complete-milestone", mid, artifactBasePath);
+      const summaryMissing = !summaryPath || !existsSync(summaryPath);
+      if (summaryMissing) {
+        const repair = await repairMissingMilestoneSummaryProjection(basePath, mid);
+        if (!repair.ok) {
+          logWarning(
+            "dispatch",
+            `Milestone ${mid} is closed in DB but SUMMARY repair failed: ${repair.error}. Dispatching complete-milestone to retry.`,
+          );
+        } else {
+          return { action: "skip" };
+        }
+      } else {
+        return { action: "skip" };
+      }
     }
   }
 
